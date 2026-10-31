@@ -1,0 +1,201 @@
+<div class="manga-settings-container">
+    <!-- Header -->
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+        <div>
+            <h2>งบประมาณและบัญชี</h2>
+            <p style="color: #64748b;">ต้นทุน: รายรับ - รายจ่าย(เต็ม) - ภาษี(3% ของจ่าย) และหักเข้ากองกลาง 10%</p>
+        </div>
+        <div style="display: flex; gap: 0.75rem;">
+            <button class="btn btn-primary" onclick="openPayeeModal()">จัดการรายชื่อผู้รับเงิน</button>
+            <button class="btn btn-primary" onclick="openTransactionModal()" style="background: #059669;">+
+                เพิ่มรายการ</button>
+        </div>
+    </div>
+
+    <!-- Stats Grid -->
+    <div class="stats-grid" style="margin-bottom: 2rem;">
+        <div class="stat-card">
+            <div class="stat-info">
+                <h3>รายได้รวม</h3>
+                <p id="budgetStatIncome">0.00 ฿</p>
+            </div>
+            <div class="stat-icon" style="background: #dcfce7; color: #166534;">📈</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-info">
+                <h3>รายจ่ายรวม (เต็ม)</h3>
+                <p id="budgetStatExpense">0.00 ฿</p>
+            </div>
+            <div class="stat-icon" style="background: #fee2e2; color: #991b1b;">📉</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-info">
+                <h3>กำไรสุทธิ (หัก 10%)</h3>
+                <p id="budgetStatProfit">0.00 ฿</p>
+            </div>
+            <div class="stat-icon" style="background: #e0e7ff; color: #3730a3;">💰</div>
+        </div>
+        <div class="stat-card" style="border: 2px solid #f59e0b; background: #fffbeb;">
+            <div class="stat-info">
+                <h3 style="color: #92400e;">ภาษีนำส่ง (3%)</h3>
+                <p id="budgetStatTax" style="color: #92400e;">0.00 ฿</p>
+            </div>
+            <div class="stat-icon" style="background: #fef3c7; color: #d97706;">🏛️</div>
+        </div>
+    </div>
+
+    <!-- Toolbar Filters -->
+    <div
+        style="display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; margin-bottom: 1.5rem; background: #fff; padding: 1.25rem; border-radius: 1rem; box-shadow: var(--card-shadow);">
+        <span style="font-weight: 600; font-size: 0.9rem; color: #475569;">🔍 เลือกช่วงเวลา:</span>
+        <select id="budgetMonthFilter" class="filter-select" onchange="loadBudgetData()"
+            style="min-width: 140px;"></select>
+        <select id="budgetYearFilter" class="filter-select" onchange="loadBudgetData()"
+            style="min-width: 110px;"></select>
+
+        <div style="border-left: 1px solid #e2e8f0; height: 24px; margin: 0 0.5rem;"></div>
+
+        <select id="budgetTypeFilter" class="filter-select" onchange="filterBudgetTable()">
+            <option value="all">ประเภท: ทั้งหมด</option>
+            <option value="Income">รายรับ (Income)</option>
+            <option value="Expense">รายจ่าย (Expense)</option>
+        </select>
+    </div>
+
+    <!-- Transaction Table -->
+    <div class="card" style="overflow-x: auto;">
+        <table style="width: 100%; border-collapse: collapse;">
+            <thead>
+                <tr style="background: #f8fafc; text-align: left;">
+                    <th style="padding: 1rem; border-bottom: 1px solid #e2e8f0;">วันที่</th>
+                    <th style="padding: 1rem; border-bottom: 1px solid #e2e8f0;">ประเภท</th>
+                    <th style="padding: 1rem; border-bottom: 1px solid #e2e8f0;">หมวดหมู่ / ช่องทาง</th>
+                    <th style="padding: 1rem; border-bottom: 1px solid #e2e8f0;">ผู้รับเรื่อง / อ้างอิง</th>
+                    <th style="padding: 1rem; border-bottom: 1px solid #e2e8f0; text-align: right;">จำนวนเงิน (฿)</th>
+                    <th style="padding: 1rem; border-bottom: 1px solid #e2e8f0;">โน้ต</th>
+                    <th style="padding: 1rem; border-bottom: 1px solid #e2e8f0; text-align: center;">จัดการ</th>
+                </tr>
+            </thead>
+            <tbody id="budgetTableBody">
+                <!-- Data will be loaded here -->
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Transaction Modal -->
+<div id="transactionModal" class="modal">
+    <div class="modal-content" style="max-width: 500px;">
+        <h3>บันทึกรายการบัญชี</h3>
+        <form id="transactionForm" onsubmit="handleTransactionSubmit(event)" style="margin-top: 1.5rem;">
+            <div class="form-group">
+                <label>วันที่</label>
+                <input type="date" id="transDate" required>
+            </div>
+            <div class="form-group">
+                <label>ประเภทรายการ</label>
+                <select id="transType" required onchange="toggleTransFields()">
+                    <option value="Income">รายรับ (Income)</option>
+                    <option value="Expense">รายจ่าย (Expense)</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label id="transCategoryLabel">หมวดหมู่ / ช่องทาง</label>
+                <select id="transCategorySelect"
+                    style="display: block; width: 100%; padding: 0.6rem; border: 1px solid #e2e8f0; border-radius: 0.5rem;">
+                    <option value="">-- เลือกช่องทาง --</option>
+                </select>
+                <input type="text" id="transCategory" placeholder="เช่น Facebook, YouTube, หรือ ค่าแรง"
+                    style="display: none;">
+            </div>
+            <div class="form-group">
+                <label id="transReferenceLabel">อ้างอิง (ชื่อผู้รับเงิน / รายงาน)</label>
+                <div style="display: flex; gap: 0.5rem;">
+                    <select id="transPayeeSelect" style="display: none;"></select>
+                    <input type="text" id="transReference" placeholder="ชื่อบุคคล หรือ เลขอ้างอิง">
+                </div>
+            </div>
+            <div class="form-group">
+                <label>จำนวนเงิน (บาท)</label>
+                <input type="number" id="transAmount" step="0.01" min="0" required placeholder="0.00">
+            </div>
+            <div class="form-group">
+                <label>หมายเหตุ</label>
+                <textarea id="transNote" rows="2"></textarea>
+            </div>
+            <div style="display: flex; gap: 1rem; margin-top: 2rem;">
+                <button type="button" class="btn" onclick="closeTransactionModal()"
+                    style="flex: 1; background: #e2e8f0;">ยกเลิก</button>
+                <button type="submit" class="btn btn-primary" style="flex: 1;">บันทึกรายการ</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Payee Management Modal -->
+<div id="payeeModal" class="modal">
+    <div class="modal-content" style="max-width: 800px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+            <h3>จัดการรายชื่อผู้รับเงินและเลขผู้เสียภาษี</h3>
+            <button class="btn btn-primary" onclick="showNewPayeeForm()"
+                style="padding: 0.5rem 0.75rem; font-size: 0.85rem;">+ เพิ่มชื่อใหม่</button>
+        </div>
+
+        <!-- Payee Form (hidden by default) -->
+        <div id="payeeFormContainer"
+            style="display: none; background: #f8fafc; padding: 1.5rem; border-radius: 0.75rem; margin-bottom: 2rem; border: 1px solid #e2e8f0;">
+            <h4 id="payeeFormTitle">เพิ่มรายชื่อผู้รับเงิน</h4>
+            <form id="payeeForm" onsubmit="handlePayeeSubmit(event)"
+                style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem;">
+                <input type="hidden" id="payeeId">
+                <div class="form-group">
+                    <label>ชื่อ-นามสกุล</label>
+                    <input type="text" id="payeeName" required>
+                </div>
+                <div class="form-group">
+                    <label>เลขบัตรประชาชน / เลขผู้เสียภาษี</label>
+                    <input type="text" id="payeeTaxId" required>
+                </div>
+                <div class="form-group">
+                    <label>เลขบัญชีธนาคาร</label>
+                    <input type="text" id="payeeBankAccount" placeholder="เช่น 012-3-45678-9">
+                </div>
+                <div class="form-group">
+                    <label>ธนาคาร (เช่น กสิกร, ไทยพาณิชย์)</label>
+                    <input type="text" id="payeeBankName">
+                </div>
+                <div class="form-group" style="grid-column: span 2;">
+                    <label>โน้ตเพิ่มเติม (เช่น เลขบัญชี)</label>
+                    <input type="text" id="payeeNote">
+                </div>
+                <div style="grid-column: span 2; display: flex; gap: 1rem; margin-top: 1rem;">
+                    <button type="button" class="btn" onclick="hidePayeeForm()"
+                        style="flex: 1; background: #cbd5e1;">ยกเลิก</button>
+                    <button type="submit" class="btn btn-primary" style="flex: 1;">บันทึกข้อมูล</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="card" style="max-height: 400px; overflow-y: auto;">
+            <table style="width: 100%; border-collapse: collapse;">
+                <thead>
+                    <tr style="background: #f1f5f9; text-align: left; position: sticky; top: 0;">
+                        <th style="padding: 0.75rem 1rem; font-size: 0.85rem;">ชื่อ</th>
+                        <th style="padding: 0.75rem 1rem; font-size: 0.85rem;">เลขผู้เสียภาษี</th>
+                        <th style="padding: 0.75rem 1rem; font-size: 0.85rem;">เลขบัญชี</th>
+                        <th style="padding: 0.75rem 1rem; font-size: 0.85rem;">ธนาคาร</th>
+                        <th style="padding: 0.75rem 1rem; font-size: 0.85rem;">โน้ต</th>
+                        <th style="padding: 0.75rem 1rem; font-size: 0.85rem; text-align: center;">จัดการ</th>
+                    </tr>
+                </thead>
+                <tbody id="payeeTableBody">
+                    <!-- Payee list items -->
+                </tbody>
+            </table>
+        </div>
+        <div style="margin-top: 1.5rem; text-align: right;">
+            <button type="button" class="btn" onclick="closePayeeModal()"
+                style="background: #475569; color: white;">ปิดหน้าต่าง</button>
+        </div>
+    </div>
+</div>

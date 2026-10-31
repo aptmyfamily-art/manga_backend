@@ -1,0 +1,85 @@
+<div id="queueModal" class="modal">
+    <div class="modal-content" style="max-width: 600px;">
+        <h2 style="margin-bottom: 1.5rem;">เพิ่มคิวงานใหม่</h2>
+        <form id="queueForm" onsubmit="handleQueueSubmit(event)">
+            <div class="form-row" style="display: flex; gap: 1rem;">
+                <div class="form-group" style="flex: 2;">
+                    <label>เลือกมังงะ</label>
+                    <div style="display: flex; gap: 0.5rem;">
+                        <select id="queueMangaId" required style="flex: 1;">
+                            <option value="">-- เลือกมังงะ --</option>
+                        </select>
+                        <button type="button" class="btn btn-primary"
+                            onclick="event.preventDefault(); event.stopPropagation(); openMangaModal()"
+                            style="padding: 0 1rem; font-size: 1.25rem;" title="เพิ่มมังงะใหม่">+</button>
+                    </div>
+                </div>
+                <div class="form-group" style="flex: 1;">
+                    <label>ตอนที่</label>
+                    <input type="text" id="queueChapter" placeholder="เช่น 123" required>
+                </div>
+                <div class="form-group" style="flex: 1;">
+                    <label>ต้นทุนต่อตอน</label>
+                    <input type="number" id="queueCostPerChapter" value="0" step="0.01">
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>🔼 ผู้อัปโหลด Raw</label>
+                <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                    <select id="uploaderName">
+                        <option value="">-- เลือกผู้รับผิดชอบ --</option>
+                    </select>
+                    <input type="text" id="rawLinkInput" placeholder="ลิงก์ Raw (เช่น https://...)">
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>📝 ผู้ดึงคำ (Extractor)</label>
+                <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                    <select id="extractorName">
+                        <option value="">-- เลือกผู้รับผิดชอบ --</option>
+                    </select>
+                    <input type="text" id="extractLinkInput" placeholder="ลิงก์ดึงคำ (เช่น https://...)">
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>🌐 ผู้แปล (Translator)</label>
+                <select id="translatorName">
+                    <option value="">-- เลือกผู้รับผิดชอบ --</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>✍️ ผู้ลงคำ (Typesetter)</label>
+                <select id="typesetterName">
+                    <option value="">-- เลือกผู้รับผิดชอบ --</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>📤 ผู้เผยแพร่ (Publisher)</label>
+                <select id="publisherName">
+                    <option value="">-- เลือกผู้รับผิดชอบ --</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>🔗 ลิงก์งาน (Work Link)</label>
+                <input type="text" id="workLink" placeholder="https://...">
+            </div>
+
+            <div class="form-group">
+                <label>📌 หมายเหตุ</label>
+                <textarea id="queueNote" rows="2" placeholder="หมายเหตุเพิ่มเติม..."></textarea>
+            </div>
+
+            <div style="display: flex; gap: 1rem; margin-top: 1.5rem;">
+                <button type="button" class="btn" style="background: #e2e8f0; flex: 1;"
+                    onclick="closeQueueModal()">ยกเลิก</button>
+                <button type="submit" class="btn btn-primary" style="flex: 2;">บันทึกคิวงาน</button>
+            </div>
+        </form>
+    </div>
+</div>

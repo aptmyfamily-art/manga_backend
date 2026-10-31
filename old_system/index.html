@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="th">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MangaHub - Management System</title>
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/slim-select@2.8.2/dist/slimselect.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/slim-select@2.8.2/dist/slimselect.min.js"></script>
+    <?!= include('style'); ?>
+</head>
+
+<body>
+
+    <!-- Burger Button -->
+    <button class="burger-btn" onclick="toggleSidebar()">
+        ☰
+    </button>
+
+    <!-- Sidebar Overlay -->
+    <div class="sidebar-overlay" onclick="toggleSidebar()"></div>
+
+    <!-- Sidebar -->
+    <div class="sidebar">
+        <div class="logo">
+            <span>📚</span> MangaHubกกก
+        </div>
+        <ul class="nav-menu">
+            <li class="nav-item active" id="nav-dashboard" onclick="switchView('dashboard')">🏠 Dashboard</li>
+            <li class="nav-item" id="nav-queue" onclick="switchView('queue')">📋 จัดการคิวงาน</li>
+            <li class="nav-item" id="nav-team" onclick="switchView('team')">👥 จัดการทีมงาน</li>
+            <li class="nav-item" id="nav-financials" onclick="switchView('financials')">📈 รายงานกำไร-ขาดทุน</li>
+            <li class="nav-item" id="nav-budget" onclick="switchView('budget')">📊 งบประมาณ & บัญชี</li>
+            <li class="nav-item" id="nav-settings" onclick="switchView('settings')">⚙️ ตั้งค่ามังงะ</li>
+        </ul>
+    </div>
+
+    <!-- Main Content -->
+    <div class="main-content">
+        <!-- Global Refresh Indicator -->
+        <div id="global-refresh-header" style="display: flex; justify-content: flex-end; margin-bottom: 1rem;">
+            <div class="refresh-info-container"
+                style="text-align: right; background: #fff; padding: 0.5rem 1rem; border-radius: 12px; border: 1px solid #e2e8f0; box-shadow: 0 1px 2px rgba(0,0,0,0.05); font-size: 0.75rem; color: #64748b; min-width: 200px;">
+                <div id="refreshStatusText"
+                    style="font-weight: 600; color: #1e293b; margin-bottom: 2px; display: flex; align-items: center; gap: 0.4rem; justify-content: flex-end;">
+                    <span class="pulse-icon"
+                        style="display: inline-block; width: 8px; height: 8px; background: #22c55e; border-radius: 50%;"></span>
+                    สถานะคลาวด์: เชื่อมต่อปกติ
+                </div>
+                <div>ดึงล่าสุด: <span id="lastFetchTime">--:--:--</span></div>
+                <div style="color: #4f46e5; font-weight: 500;">รอบถัดไป: <span id="nextFetchTime">--:--:--</span> (<span
+                        id="countdownText">--</span> วินาที)</div>
+            </div>
+        </div>
+
+        <!-- Dashboard View -->
+        <div id="dashboard-view">
+            <?!= include('view-dashboard'); ?>
+        </div>
+
+        <!-- Queue View -->
+        <div id="queue-view" style="display: none;">
+            <?!= include('view-queue'); ?>
+        </div>
+
+        <!-- Settings View -->
+        <div id="settings-view" style="display: none;">
+            <?!= include('view-manga'); ?>
+        </div>
+
+        <!-- Team View -->
+        <div id="team-view" style="display: none;">
+            <?!= include('view-team'); ?>
+        </div>
+
+        <!-- Budget View -->
+        <div id="budget-view" style="display: none;">
+            <?!= include('view-budget'); ?>
+        </div>
+
+        <!-- Financial View -->
+        <div id="financials-view" style="display: none;">
+            <?!= include('view-financials'); ?>
+        </div>
+    </div>
+
+    <!-- Modals -->
+    <?!= include('queue-modal'); ?>
+    <?!= include('update-queue-modal'); ?>
+    <?!= include('step-modal'); ?>
+    <?!= include('manga-modal'); ?>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast">Successfully saved!</div>
+
+    <!-- Loader -->
+    <div id="loader">
+        <div class="spinner"></div>
+    </div>
+
+    <?!= include('javascript'); ?>
+</body>
+
+</html>

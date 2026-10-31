@@ -1,0 +1,242 @@
+<div class="manga-settings-container">
+    <!-- Dashboard Stats Overview (Mirrored) -->
+    <div style="margin-bottom: 1rem;">
+        <p style="font-weight: 600; font-size: 0.9rem; color: #64748b; margin-bottom: 0.75rem;">📊 ภาพรวมระบบ</p>
+        <div class="stats-grid" style="margin-bottom: 1.5rem; gap: 1rem;">
+            <div class="stat-card" style="padding: 1rem;">
+                <div class="stat-info">
+                    <h3 style="font-size: 0.75rem;">มังงะทั้งหมด</h3>
+                    <p id="totalSeries" style="font-size: 1.25rem;">0</p>
+                </div>
+                <div class="stat-icon"
+                    style="background: #e0e7ff; color: #4f46e5; width: 36px; height: 36px; font-size: 1rem;">📚</div>
+            </div>
+            <div class="stat-card" style="padding: 1rem;">
+                <div class="stat-info">
+                    <h3 style="font-size: 0.75rem;">คิวงานที่ค้างอยู่</h3>
+                    <p id="pendingSeries" style="font-size: 1.25rem;">0</p>
+                </div>
+                <div class="stat-icon"
+                    style="background: #fef9c3; color: #854d0e; width: 36px; height: 36px; font-size: 1rem;">⏳</div>
+            </div>
+            <div class="stat-card" style="padding: 1rem;">
+                <div class="stat-info">
+                    <h3 style="font-size: 0.75rem;">เสร็จแล้วสัปดาห์นี้</h3>
+                    <p id="finishedThisWeek" style="font-size: 1.25rem;">0</p>
+                </div>
+                <div class="stat-icon"
+                    style="background: #dcfce7; color: #16a34a; width: 36px; height: 36px; font-size: 1rem;">✅</div>
+            </div>
+            <div class="stat-card" style="padding: 1rem;">
+                <div class="stat-info">
+                    <h3 style="font-size: 0.75rem;">ควรปล่อยวันนี้</h3>
+                    <p id="releasedToday" style="font-size: 1.25rem;">0</p>
+                </div>
+                <div class="stat-icon"
+                    style="background: #fee2e2; color: #dc2626; width: 36px; height: 36px; font-size: 1rem;">🔥</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Top Header: Queue Overview -->
+    <div style="margin-bottom: 1rem; border-top: 1px solid #e2e8f0; padding-top: 1.5rem;">
+        <p style="font-weight: 600; font-size: 0.9rem; color: #64748b; margin-bottom: 0.75rem;">🕒
+            สถานะคิวงานแยกตามขั้นตอน</p>
+    </div>
+
+    <!-- Queue Stats -->
+    <div class="stats-grid" style="margin-bottom: 2rem;">
+        <div class="stat-card" style="padding: 1rem;">
+            <div class="stat-info">
+                <h3 style="font-size: 0.75rem;">งานที่เสร็จแล้ว</h3>
+                <p id="qStatFinished" style="font-size: 1.25rem;">0</p>
+            </div>
+            <div class="stat-icon"
+                style="background: #dcfce7; color: #16a34a; width: 36px; height: 36px; font-size: 1rem;">✅</div>
+        </div>
+        <div class="stat-card" style="padding: 1rem;">
+            <div class="stat-info">
+                <h3 style="font-size: 0.75rem;">รออัป Raw</h3>
+                <p id="qStatUpload" style="font-size: 1.25rem;">0</p>
+            </div>
+            <div class="stat-icon"
+                style="background: #e0e7ff; color: #4f46e5; width: 36px; height: 36px; font-size: 1rem;">🔼</div>
+        </div>
+        <div class="stat-card" style="padding: 1rem;">
+            <div class="stat-info">
+                <h3 style="font-size: 0.75rem;">รอดึงคำ</h3>
+                <p id="qStatExtract" style="font-size: 1.25rem;">0</p>
+            </div>
+            <div class="stat-icon"
+                style="background: #ffedd5; color: #c2410c; width: 36px; height: 36px; font-size: 1rem;">📝</div>
+        </div>
+        <div class="stat-card" style="padding: 1rem;">
+            <div class="stat-info">
+                <h3 style="font-size: 0.75rem;">รอแปล</h3>
+                <p id="qStatTranslate" style="font-size: 1.25rem;">0</p>
+            </div>
+            <div class="stat-icon"
+                style="background: #fce7f3; color: #db2777; width: 36px; height: 36px; font-size: 1rem;">🌐</div>
+        </div>
+        <div class="stat-card" style="padding: 1rem;">
+            <div class="stat-info">
+                <h3 style="font-size: 0.75rem;">รอลงคำ</h3>
+                <p id="qStatTypeset" style="font-size: 1.25rem;">0</p>
+            </div>
+            <div class="stat-icon"
+                style="background: #fef9c3; color: #854d0e; width: 36px; height: 36px; font-size: 1rem;">✍️</div>
+        </div>
+        <div class="stat-card" style="padding: 1rem;">
+            <div class="stat-info">
+                <h3 style="font-size: 0.75rem;">รอ Publish</h3>
+                <p id="qStatPublish" style="font-size: 1.25rem;">0</p>
+            </div>
+            <div class="stat-icon"
+                style="background: #f3f4f6; color: #4b5563; width: 36px; height: 36px; font-size: 1rem;">📤</div>
+        </div>
+        <div class="stat-card" style="padding: 1rem;">
+            <div class="stat-info">
+                <h3 style="font-size: 0.75rem;">รอโพสต์</h3>
+                <p id="qStatPost" style="font-size: 1.25rem;">0</p>
+            </div>
+            <div class="stat-icon"
+                style="background: #e2e8f0; color: #64748b; width: 36px; height: 36px; font-size: 1rem;">✉️</div>
+        </div>
+    </div>
+
+    <!-- Original Header moved here -->
+    <header
+        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; padding-top: 1rem; border-top: 1px solid #e2e8f0;">
+        <div>
+            <h2>รายการคิวงาน</h2>
+            <p style="color: #666;">ติดตามความคืบหน้าการทำงานรายตอน</p>
+        </div>
+        <button class="btn btn-primary" onclick="openQueueModal()">+ เพิ่มคิวงาน</button>
+    </header>
+
+    <!-- Toolbar / Filters -->
+    <div
+        style="display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; background: #f8fafc; padding: 1rem; border-radius: 0.5rem;">
+        <span style="font-weight: 600; font-size: 0.9rem; color: #475569;">🔍 ตัวกรอง:</span>
+
+        <input type="text" id="searchInput" placeholder="ค้นหาชื่อเรื่อง..."
+            style="padding: 0.5rem; border: 1px solid #cbd5e1; border-radius: 0.5rem; min-width: 200px;"
+            oninput="filterQueue()">
+
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+            <select id="monthFilter" class="filter-select" onchange="filterQueue()" style="min-width: 120px;">
+                <!-- Months will be populated by JS -->
+            </select>
+            <select id="yearFilter" class="filter-select" onchange="filterQueue()" style="min-width: 100px;">
+                <!-- Years will be populated by JS -->
+            </select>
+        </div>
+
+        <select id="completionFilter" class="filter-select" onchange="filterQueue()">
+            <option value="all">สถานะ: ทั้งหมด</option>
+            <option value="incomplete" selected>ยังไม่เสร็จ (Incomplete)</option>
+            <option value="complete">เสร็จแล้ว (Finished)</option>
+        </select>
+
+        <select id="stepFilter" class="filter-select" onchange="filterQueue()">
+            <option value="all">ขั้นตอน: ทั้งหมด</option>
+            <option value="upload">รอ/ทำ: อัป Raw</option>
+            <option value="extract">รอ/ทำ: ดึงคำ</option>
+            <option value="translate">รอ/ทำ: แปล</option>
+            <option value="typeset">รอ/ทำ: ลงคำ</option>
+            <option value="publish">รอ/ทำ: Publish</option>
+            <option value="post">รอ/ทำ: โพสต์</option>
+        </select>
+
+        <select id="urgentFilter" class="filter-select" onchange="filterQueue()">
+            <option value="all">ความเร่งด่วน: ทั้งหมด</option>
+            <option value="urgent">🔥 งานด่วน</option>
+            <option value="normal">งานไม่ด่วน</option>
+        </select>
+
+        <select id="assigneeFilter" class="filter-select" onchange="filterQueue()" style="max-width: 150px;">
+            <option value="all">ทีมงาน: ทั้งหมด</option>
+        </select>
+    </div>
+
+    <!-- Bulk Action Toolbar -->
+    <div id="bulkActionBar" class="card"
+        style="margin-bottom: 1rem; padding: 0.85rem 1.25rem; border: 1.5px solid var(--border-color); background: rgba(99, 102, 241, 0.05); border-radius: var(--radius-md); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.75rem;">
+        
+        <div style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
+            <div style="display: flex; align-items: center; gap: 0.5rem; background: var(--bg-card); padding: 0.35rem 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
+                <input type="checkbox" id="bulkSelectAllToggle" onchange="toggleSelectAllFiltered(this.checked)" style="width: 18px; height: 18px; cursor: pointer; accent-color: var(--primary-color);">
+                <label for="bulkSelectAllToggle" style="font-weight: 600; font-size: 0.875rem; cursor: pointer; user-select: none;">
+                    ติ๊กทั้งหมดที่แสดง
+                </label>
+            </div>
+            <span style="font-size: 0.875rem; color: var(--text-muted);">
+                เลือกอยู่ <strong id="selectedCountBadge" style="color: var(--primary-light); font-size: 1rem;">0</strong> รายการ
+            </span>
+            <button type="button" class="btn btn-secondary" id="btnClearQueueSelection" onclick="clearQueueSelection()" 
+                style="padding: 0.35rem 0.65rem; font-size: 0.8rem; display: none;">
+                ✕ ยกเลิกที่เลือก
+            </button>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 0.65rem; flex-wrap: wrap;">
+            <div style="display: flex; align-items: center; gap: 0.4rem;">
+                <label style="font-size: 0.85rem; font-weight: 500; color: var(--text-muted); white-space: nowrap;">ขั้นตอน:</label>
+                <select id="bulkStepSelect" class="filter-select" style="min-width: 130px; padding: 0.45rem 0.75rem;">
+                    <option value="post" selected>📮 โพสต์</option>
+                    <option value="publish">📤 Publisher</option>
+                    <option value="typeset">✍️ ลงคำ</option>
+                    <option value="translate">🌐 แปล</option>
+                    <option value="extract">📝 ดึงคำ</option>
+                    <option value="upload">🔼 อัป Raw</option>
+                </select>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 0.4rem;">
+                <label style="font-size: 0.85rem; font-weight: 500; color: var(--text-muted); white-space: nowrap;">สถานะเป็น:</label>
+                <select id="bulkStatusSelect" class="filter-select" style="min-width: 125px; padding: 0.45rem 0.75rem; font-weight: 600; color: var(--success-text);">
+                    <option value="เสร็จแล้ว" selected>✅ เสร็จแล้ว</option>
+                    <option value="กำลังทำ">⏳ กำลังทำ</option>
+                    <option value="รอเริ่ม">⏸️ รอเริ่ม</option>
+                    <option value="Skipped">⏭️ ข้าม (Skipped)</option>
+                </select>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 0.4rem;">
+                <label style="font-size: 0.85rem; font-weight: 500; color: var(--text-muted); white-space: nowrap;">ผู้รับผิดชอบ:</label>
+                <select id="bulkAssigneeSelect" class="filter-select" style="min-width: 130px; padding: 0.45rem 0.75rem;">
+                    <option value="__KEEP__">-- คงเดิม --</option>
+                </select>
+            </div>
+
+            <button type="button" class="btn btn-primary" id="btnBulkApplyStatus" onclick="applyBulkQueueStatus()"
+                disabled style="padding: 0.45rem 1.15rem; font-size: 0.875rem; opacity: 0.6; cursor: not-allowed;">
+                ⚡ อัปเดตสถานะทั้งหมด
+            </button>
+        </div>
+    </div>
+
+    <div class="card" style="overflow-x: auto;">
+        <table style="width: 100%; border-collapse: collapse;">
+            <thead>
+                <tr style="background: #f8fafc; text-align: left;">
+                    <th style="padding: 1rem 0.5rem; border-bottom: 1px solid #e2e8f0; width: 44px; text-align: center;">
+                        <input type="checkbox" id="selectAllQueueHeader" onchange="toggleSelectAllFiltered(this.checked)" title="ติ๊กทั้งหมดที่แสดง" style="width: 18px; height: 18px; cursor: pointer; accent-color: var(--primary-color);">
+                    </th>
+                    <th style="padding: 1rem; border-bottom: 1px solid #e2e8f0;">วันที่/เรื่อง</th>
+                    <th style="padding: 1rem; border-bottom: 1px solid #e2e8f0;">อัป Raw</th>
+                    <th style="padding: 1rem; border-bottom: 1px solid #e2e8f0;">ดึงคำ</th>
+                    <th style="padding: 1rem; border-bottom: 1px solid #e2e8f0;">แปล</th>
+                    <th style="padding: 1rem; border-bottom: 1px solid #e2e8f0;">ลงคำ</th>
+                    <th style="padding: 1rem; border-bottom: 1px solid #e2e8f0;">Publisher</th>
+                    <th style="padding: 1rem; border-bottom: 1px solid #e2e8f0;">โพสต์</th>
+                    <th style="padding: 1rem; border-bottom: 1px solid #e2e8f0;">โน้ต</th>
+                    <th style="padding: 1rem; border-bottom: 1px solid #e2e8f0;">จัดการ</th>
+                </tr>
+            </thead>
+            <tbody id="queueTableBody">
+                <!-- Queue items will be loaded here -->
+            </tbody>
+        </table>
+    </div>
+</div>

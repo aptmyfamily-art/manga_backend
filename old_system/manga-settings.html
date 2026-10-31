@@ -1,0 +1,57 @@
+<div class="manga-settings-container">
+    <header style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+        <div>
+            <h2>จัดการข้อมูลมังงะ</h2>
+            <p style="color: #666;">เพิ่ม ลบ หรือแก้ไขข้อมูลมังงะในระบบ</p>
+        </div>
+        <button class="btn btn-primary" onclick="openMangaModal()">+ เพิ่มมังงะใหม่</button>
+    </header>
+
+    <!-- Manga Table -->
+    <div class="card" style="margin-bottom: 2rem;">
+        <div style="overflow-x: auto;">
+            <table style="width: 100%; border-collapse: collapse; min-width: 800px;">
+                <thead>
+                    <tr style="background: #f8fafc; text-align: left;">
+                        <th style="padding: 1rem; border-bottom: 1px solid #e2e8f0;">ชื่อมังงะ</th>
+                        <th style="padding: 1rem; border-bottom: 1px solid #e2e8f0;">Slug</th>
+                        <th style="padding: 1rem; border-bottom: 1px solid #e2e8f0;">สถานะ</th>
+                        <th style="padding: 1rem; border-bottom: 1px solid #e2e8f0;">ตอนล่าสุด</th>
+                        <th style="padding: 1rem; border-bottom: 1px solid #e2e8f0;">อัปเดตล่าสุด</th>
+                        <th style="padding: 1rem; border-bottom: 1px solid #e2e8f0;">จัดการ</th>
+                    </tr>
+                </thead>
+                <tbody id="mangaTableBody">
+                    <!-- Rows will be populated by JS -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- System Administration / Triggers -->
+    <div style="border-top: 1px solid #e2e8f0; padding-top: 2rem;">
+        <h3 style="margin-bottom: 1rem; color: #1e293b;">⚙️ ตั้งค่าระบบอัตโนมัติ (System Triggers)</h3>
+        <div class="card"
+            style="display: flex; gap: 1rem; padding: 1.5rem; flex-wrap: wrap; background: #f1f5f9; border: none;">
+            <div style="flex: 1; min-width: 250px;">
+                <p style="font-weight: 600; margin-bottom: 0.5rem; color: #475569;">ย้ายงานค้างอัตโนมัติ</p>
+                <p style="font-size: 0.85rem; color: #64748b; margin-bottom: 1rem;">
+                    ย้ายงานที่ยังโพสต์ไม่เสร็จจากเดือนก่อนๆ มายังเดือนปัจจุบันโดยอัตโนมัติทุกวัน</p>
+                <div style="display: flex; gap: 0.5rem;">
+                    <button class="btn" style="background: #4f46e5; color: white; font-size: 0.85rem;"
+                        onclick="handleCreateMoveTrigger()">ตั้งเวลาออโต้ (03:00 น.)</button>
+                    <button class="btn"
+                        style="background: #fff; border: 1px solid #cbd5e1; color: #475569; font-size: 0.85rem;"
+                        onclick="handleManualMovePending()">รันเดี๋ยวนี้ (Manual)</button>
+                </div>
+            </div>
+            <div style="flex: 1; min-width: 250px; border-left: 1px solid #cbd5e1; padding-left: 1.5rem;">
+                <p style="font-weight: 600; margin-bottom: 0.5rem; color: #475569;">คิวงานอัตโนมัติ (MangaList)</p>
+                <p style="font-size: 0.85rem; color: #64748b; margin-bottom: 1rem;">
+                    เพิ่มมังงะเข้าคิวงานโดยอัตโนมัติตามวันที่กำหนดไว้ในตาราง MangaList</p>
+                <button class="btn" style="background: #0ea5e9; color: white; font-size: 0.85rem;"
+                    onclick="handleCreateAutoQueueTrigger()">ตั้งเวลาออโต้ (02:00 น.)</button>
+            </div>
+        </div>
+    </div>
+</div>

@@ -1,0 +1,3587 @@
+<script>
+    let mangaList = [];
+    let queueList = [];
+    let teamList = [];
+    let payeeList = [];
+    const REFRESH_INTERVAL = 600000; // 10 minutes for production
+    let lastRefreshTimestamp = new Date();
+    let nextRefreshTimestamp = new Date(lastRefreshTimestamp.getTime() + REFRESH_INTERVAL);
+    let isRefreshing = false;
+    let refreshWatchdog = null;
+    let isAuthorized = false;
+    let ssQueueManga = null;
+    let ssFinManga = null;
+    let ssLockedTranslator = null;
+    let ssTeam = {};
+    let ssAssigneeFilter = null;
+    let ssPayee = null;
+    let ssWebsites = {};
+    let selectedQueueIds = new Set();
+    let currentFilteredQueue = [];
+
+    // Initialize
+    window.onload = function () {
+        showLoader(true);
+        initQueueFilters();
+        initBudgetFilters();
+
+        google.script.run
+            .withSuccessHandler(data => {
+                mangaList = Array.isArray(data.manga) ? data.manga : [];
+                queueList = Array.isArray(data.queue) ? data.queue : [];
+                teamList = Array.isArray(data.team) ? data.team : [];
+
+                // Render core components
+                financialSalesList = data.sales || [];
+                // Populate Dropdowns
+                websiteList = data.websites || [];
+                populateMangaDropdown(mangaList);
+                populateFinancialMangaDropdown(mangaList);
+                populateWebsiteDropdown(websiteList);
+                populateTeamDropdowns(teamList);
+                populateAssigneeFilter(teamList);
+
+                renderFinancialTable();
+                renderRankings(financialSalesList);
+
+                // This function likely renders the schedule view seen in the user's screenshot
+                renderDashboard();
+                renderMangaTable(mangaList);
+                filterQueue();
+                updateGlobalStats();
+                updateQueueStats(queueList);
+                // initFinancialFilters(); // Removed as per instruction's implied change
+
+                showLoader(false);
+                lastRefreshTimestamp = new Date();
+                nextRefreshTimestamp = new Date(lastRefreshTimestamp.getTime() + REFRESH_INTERVAL);
+                updateRefreshTimestamps();
+                startHeartbeat(); // Start the countdown and auto-refresh cycle
+            })
+            .withFailureHandler(onError)
+            .getDashboardData();
+    };
+
+    // --- BUDGET FUNCTIONS (Global) ---
+    window.initBudgetFilters = function () {
+        const monthSelect = document.getElementById('budgetMonthFilter');
+        const yearSelect = document.getElementById('budgetYearFilter');
+        if (!monthSelect || !yearSelect) return;
+
+        const thaiMonths = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"];
+        monthSelect.innerHTML = '<option value="all">เดือน: ทั้งหมด</option>';
+        thaiMonths.forEach((m, i) => {
+            const opt = document.createElement('option');
+            opt.value = (i + 1).toString();
+            opt.textContent = m;
+            monthSelect.appendChild(opt);
+        });
+
+        const now = new Date();
+        const currentYear = now.getFullYear();
+        yearSelect.innerHTML = '<option value="all">ปี: ทั้งหมด</option>';
+        for (let i = 0; i < 6; i++) {
+            const y = currentYear - i;
+            const opt = document.createElement('option');
+            opt.value = y.toString();
+            opt.textContent = (y + 543).toString();
+            yearSelect.appendChild(opt);
+        }
+        monthSelect.value = (now.getMonth() + 1).toString();
+        yearSelect.value = 'all';
+    };
+
+    window.populateWebsiteDropdown = function (websites) {
+        const ids = ['finWebsite', 'transCategorySelect'];
+        const hardcoded = [
+            'ReadRealm แปลจนเมื่อย',
+            'ReadRealm น้องแมวส้ม',
+            'ReadRealm แปลแล้วแปลอีก',
+            'ReadRealm แปลจนแขนหัก'
+        ];
+
+        // Combine with provided list, avoiding duplicates
+        let fullList = [...hardcoded];
+        if (Array.isArray(websites)) {
+            websites.forEach(w => {
+                // Remove generic placeholders or "Other" if requested
+                const isPlaceholder = w === 'Other' || w === 'ช่องทาง Readrealm' || w === 'Readrealm';
+                if (w && !fullList.includes(w) && !isPlaceholder) {
+                    fullList.push(w);
+                }
+            });
+        }
+
+        ids.forEach(id => {
+            const select = document.getElementById(id);
+            if (!select) return;
+            select.innerHTML = '<option value="">-- เลือกช่องทาง --</option>';
+            fullList.forEach(site => {
+                const opt = document.createElement('option');
+                opt.value = site;
+                opt.textContent = site;
+                select.appendChild(opt);
+            });
+
+            // Initialize/Update SlimSelect
+            if (typeof SlimSelect !== 'undefined') {
+                if (!ssWebsites[id]) {
+                    ssWebsites[id] = new SlimSelect({
+                        select: '#' + id,
+                        settings: {
+                            placeholderText: '-- เลือกช่องทาง --',
+                            searchPlaceholderText: 'ค้นหาช่องทาง...',
+                        }
+                    });
+                } else {
+                    const data = fullList.map(s => ({ text: s, value: s }));
+                    ssWebsites[id].setData([{ text: '-- เลือกช่องทาง --', value: '' }, ...data]);
+                }
+            }
+        });
+    };
+
+    window.loadBudgetData = function () {
+        showLoader(true);
+        google.script.run
+            .withSuccessHandler(data => {
+                payeeList = Array.isArray(data.payees) ? data.payees : [];
+                transactionList = Array.isArray(data.transactions) ? data.transactions : [];
+                populatePayeeDropdown(payeeList);
+                populateWebsiteDropdown(data.websites || []);
+                renderPayeeTable(payeeList);
+                filterBudgetTable();
+                showLoader(false);
+            })
+            .withFailureHandler(onError)
+            .getBudgetData();
+    };
+
+    window.loadTeamData = function () {
+        showLoader(true);
+        google.script.run
+            .withSuccessHandler(data => {
+                teamList = Array.isArray(data) ? data : [];
+                renderTeamTable(teamList);
+                populateTeamDropdowns(teamList);
+                populateAssigneeFilter(teamList);
+                showLoader(false);
+            })
+            .withFailureHandler(onError)
+            .getTeamMembers();
+    };
+
+    window.filterBudgetTable = function () {
+        const monthVal = document.getElementById('budgetMonthFilter').value;
+        const yearVal = document.getElementById('budgetYearFilter').value;
+        const typeVal = document.getElementById('budgetTypeFilter').value;
+        let filtered = transactionList;
+        if (monthVal !== 'all' || yearVal !== 'all') {
+            filtered = filtered.filter(t => {
+                if (!t.date) return false;
+                const d = new Date(t.date);
+                const mMatch = monthVal === 'all' || (d.getMonth() + 1).toString() === monthVal;
+                const yMatch = yearVal === 'all' || d.getFullYear().toString() === yearVal;
+                return mMatch && yMatch;
+            });
+        }
+        if (typeVal !== 'all') filtered = filtered.filter(t => t.type === typeVal);
+        renderBudgetTable(filtered);
+        updateBudgetStats(filtered);
+    };
+
+    window.renderBudgetTable = function (data) {
+        const tbody = document.getElementById('budgetTableBody');
+        if (!tbody) return;
+        tbody.innerHTML = '';
+        if (!data || data.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 2rem; color: #64748b;">ไม่มีข้อมูลรายการบัญชี</td></tr>';
+            return;
+        }
+        data.sort((a, b) => new Date(b.date) - new Date(a.date));
+        data.forEach(t => {
+            const tr = document.createElement('tr');
+            const d = new Date(t.date);
+            const dateStr = d.toLocaleDateString('th-TH');
+            const isIncome = t.type === 'Income';
+            tr.innerHTML = `
+                <td style="padding: 1rem; border-bottom: 1px solid #eee; font-size: 0.85rem;">${dateStr}</td>
+                <td style="padding: 1rem; border-bottom: 1px solid #eee;">
+                    <span style="padding: 0.25rem 0.5rem; border-radius: 0.5rem; font-size: 0.75rem; font-weight: 600; background: ${isIncome ? '#dcfce7' : '#fee2e2'}; color: ${isIncome ? '#166534' : '#991b1b'};">${isIncome ? 'รายรับ' : 'รายจ่าย'}</span>
+                </td>
+                <td style="padding: 1rem; border-bottom: 1px solid #eee; font-weight: 500;">${t.category}</td>
+                <td style="padding: 1rem; border-bottom: 1px solid #eee; font-size: 0.85rem; color: #475569;">${t.reference || '-'}</td>
+                <td style="padding: 1rem; border-bottom: 1px solid #eee; text-align: right; font-weight: 600; color: ${isIncome ? '#166534' : '#b91c1c'};">${isIncome ? '+' : '-'}${parseFloat(t.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })} ฿</td>
+                <td style="padding: 1rem; border-bottom: 1px solid #eee; font-size: 0.8rem; color: #666;">${t.note || '-'}</td>
+                <td style="padding: 1rem; border-bottom: 1px solid #eee; text-align: center;"><button class="btn" style="padding: 0.25rem 0.5rem; background: #fee2e2; color: #dc2626;" onclick="deleteTransaction('${t.transactionid}')">🗑️</button></td>
+            `;
+            tbody.appendChild(tr);
+        });
+    };
+
+    window.updateBudgetStats = function (data) {
+        let income = 0, expenses = 0;
+
+        data.forEach(t => {
+            if (t.type === 'Income') {
+                income += parseFloat(t.amount) || 0;
+            } else {
+                expenses += parseFloat(t.amount) || 0;
+            }
+        });
+
+        // 3. ภาษีหัก ณ ที่จ่าย 3% จากยอดรายจ่าย (จ่ายราคาเต็ม แต่หักส่วนต่างจากรายรับเพื่อนำส่ง)
+        const tax3 = expenses * 0.03;
+
+        // 4-5. เงินคงเหลือหลังหักรายจ่าย (ราคาเต็ม) และภาษี 3%
+        const remainingBeforeFund = income - expenses - tax3;
+
+        // 6. เงินคงเหลือ - 10% (หักเข้ากองกลาง/ระดมทุน)
+        const centralFund = remainingBeforeFund > 0 ? remainingBeforeFund * 0.10 : 0;
+
+        // 7. กำไรสุทธิ
+        const netProfit = remainingBeforeFund - centralFund;
+
+        setTextIfExist('budgetStatIncome', income.toLocaleString(undefined, { minimumFractionDigits: 2 }) + ' ฿');
+        setTextIfExist('budgetStatExpense', expenses.toLocaleString(undefined, { minimumFractionDigits: 2 }) + ' ฿');
+        setTextIfExist('budgetStatProfit', netProfit.toLocaleString(undefined, { minimumFractionDigits: 2 }) + ' ฿');
+        setTextIfExist('budgetStatTax', tax3.toLocaleString(undefined, { minimumFractionDigits: 2 }) + ' ฿');
+    };
+
+    window.openTransactionModal = function () {
+        document.getElementById('transactionForm').reset();
+        document.getElementById('transDate').valueAsDate = new Date();
+        if (typeof SlimSelect !== 'undefined') {
+            if (ssPayee) ssPayee.setSelected('');
+            if (ssWebsites['transCategorySelect']) ssWebsites['transCategorySelect'].setSelected('');
+        }
+        toggleTransFields();
+        document.getElementById('transactionModal').style.display = 'flex';
+    };
+
+    window.closeTransactionModal = function () { document.getElementById('transactionModal').style.display = 'none'; };
+
+    window.toggleTransFields = function () {
+        const type = document.getElementById('transType').value;
+        const payeeSelect = document.getElementById('transPayeeSelect');
+        const refInput = document.getElementById('transReference');
+        const catLabel = document.getElementById('transCategoryLabel');
+        const refLabel = document.getElementById('transReferenceLabel');
+        const catSelect = document.getElementById('transCategorySelect');
+        const catInput = document.getElementById('transCategory');
+
+        if (type === 'Expense') {
+            catLabel.innerText = "หมวดหมู่ (เช่น ค่าตัวละคร, ค่าแปล)";
+            refLabel.innerText = "จ่ายให้ใคร (เลือกจากรายชื่อ)";
+            payeeSelect.style.display = 'block';
+            payeeSelect.onchange = function () { if (this.value) refInput.value = this.value; };
+            catSelect.style.display = 'none';
+            catSelect.removeAttribute('required');
+            catInput.style.display = 'block';
+            catInput.setAttribute('required', 'true');
+        } else {
+            catLabel.innerText = "ช่องทางรายรับ (ReadRealm)";
+            refLabel.innerText = "อ้างอิง (เช่น รหัสแคมเปญ)";
+            payeeSelect.style.display = 'none';
+            catSelect.style.display = 'block';
+            catSelect.setAttribute('required', 'true');
+            catInput.style.display = 'none';
+            catInput.removeAttribute('required');
+        }
+    };
+
+    window.handleTransactionSubmit = function (e) {
+        e.preventDefault();
+        const btn = e.target.querySelector('button[type="submit"]');
+        const originalText = btn.innerText;
+        btn.innerText = 'กำลังบันทึก...'; btn.disabled = true;
+        const type = document.getElementById('transType').value;
+        const category = type === 'Income' ? document.getElementById('transCategorySelect').value : document.getElementById('transCategory').value;
+
+        const transData = {
+            date: document.getElementById('transDate').value,
+            type: type,
+            category: category,
+            reference: document.getElementById('transReference').value,
+            amount: document.getElementById('transAmount').value,
+            note: document.getElementById('transNote').value
+        };
+        showLoader(true);
+        google.script.run
+            .withSuccessHandler(res => {
+                btn.innerText = originalText; btn.disabled = false; showLoader(false);
+                if (res.error) Swal.fire('Error', res.error, 'error');
+                else { closeTransactionModal(); showToast('บันทึกรายการเรียบร้อย'); transactionList = res.transactions; filterBudgetTable(); }
+            })
+            .withFailureHandler(onError).addBudgetTransaction(transData);
+    };
+
+    window.deleteTransaction = function (id) {
+        Swal.fire({ title: 'ลบรายการนี้?', icon: 'warning', showCancelButton: true, confirmButtonColor: '#dc2626', confirmButtonText: 'ลบข้อมูล' }).then((result) => {
+            if (result.isConfirmed) {
+                showLoader(true);
+                google.script.run.withSuccessHandler(res => { showToast('ลบรายการเรียบร้อย'); transactionList = res.transactions; filterBudgetTable(); showLoader(false); }).withFailureHandler(onError).deleteBudgetTransaction(id);
+            }
+        });
+    };
+
+    window.openPayeeModal = function () { hidePayeeForm(); renderPayeeTable(payeeList); document.getElementById('payeeModal').style.display = 'flex'; };
+    window.closePayeeModal = function () { document.getElementById('payeeModal').style.display = 'none'; };
+    window.showNewPayeeForm = function () {
+        document.getElementById('payeeId').value = '';
+        document.getElementById('payeeForm').reset();
+        if (document.getElementById('payeeBankAccount')) document.getElementById('payeeBankAccount').value = '';
+        if (document.getElementById('payeeBankName')) document.getElementById('payeeBankName').value = '';
+        document.getElementById('payeeFormTitle').innerText = 'เพิ่มรายชื่อผู้รับเงิน';
+        document.getElementById('payeeFormContainer').style.display = 'block';
+    };
+    window.hidePayeeForm = function () { document.getElementById('payeeFormContainer').style.display = 'none'; };
+
+    window.handlePayeeSubmit = function (e) {
+        e.preventDefault();
+        const btn = e.target.querySelector('button[type="submit"]');
+        const originalText = btn.innerText;
+        btn.innerText = 'กำลังบันทึก...'; btn.disabled = true;
+        const id = document.getElementById('payeeId').value;
+        const data = {
+            name: document.getElementById('payeeName').value,
+            taxid: document.getElementById('payeeTaxId').value,
+            bankaccount: document.getElementById('payeeBankAccount').value,
+            bankname: document.getElementById('payeeBankName').value,
+            note: document.getElementById('payeeNote').value
+        };
+        showLoader(true);
+        const successHandler = res => {
+            btn.innerText = originalText; btn.disabled = false; showLoader(false);
+            if (res.error) Swal.fire('Error', res.error, 'error');
+            else { hidePayeeForm(); showToast('บันทึกข้อมูลเรียบร้อย'); payeeList = res.payees; renderPayeeTable(payeeList); populatePayeeDropdown(payeeList); }
+        };
+        if (id) google.script.run.withSuccessHandler(successHandler).withFailureHandler(onError).updateBudgetPayee(id, data);
+        else google.script.run.withSuccessHandler(successHandler).withFailureHandler(onError).addBudgetPayee(data);
+    };
+
+    window.editPayee = function (id) {
+        const p = payeeList.find(x => x.payeeid === id.toString());
+        if (!p) return;
+        document.getElementById('payeeId').value = p.payeeid;
+        document.getElementById('payeeName').value = p.name;
+        document.getElementById('payeeTaxId').value = p.taxid;
+        if (document.getElementById('payeeBankAccount')) document.getElementById('payeeBankAccount').value = p.bankaccount || '';
+        if (document.getElementById('payeeBankName')) document.getElementById('payeeBankName').value = p.bankname || '';
+        document.getElementById('payeeNote').value = p.note || '';
+        document.getElementById('payeeFormTitle').innerText = 'แก้ไขข้อมูลผู้รับเงิน';
+        document.getElementById('payeeFormContainer').style.display = 'block';
+    };
+
+    window.deletePayee = function (id) {
+        Swal.fire({ title: 'ลบรายชื่อ?', icon: 'warning', showCancelButton: true, confirmButtonColor: '#dc2626', confirmButtonText: 'ลบข้อมูล' }).then((result) => {
+            if (result.isConfirmed) {
+                showLoader(true);
+                google.script.run.withSuccessHandler(res => { showToast('ลบข้อมูลเรียบร้อย'); payeeList = res.payees; renderPayeeTable(payeeList); populatePayeeDropdown(payeeList); showLoader(false); }).withFailureHandler(onError).deleteBudgetPayee(id);
+            }
+        });
+    };
+
+    window.renderPayeeTable = function (data) {
+        const tbody = document.getElementById('payeeTableBody');
+        if (!tbody) return;
+        tbody.innerHTML = '';
+        data.forEach(p => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td style="padding: 0.75rem 1rem; border-bottom: 1px solid #eee; font-weight: 500;">${p.name}</td>
+                <td style="padding: 0.75rem 1rem; border-bottom: 1px solid #eee; font-size: 0.85rem; color: #475569;">${p.taxid}</td>
+                <td style="padding: 0.75rem 1rem; border-bottom: 1px solid #eee; font-size: 0.85rem; color: #475569;">${p.bankaccount || '-'}</td>
+                <td style="padding: 0.75rem 1rem; border-bottom: 1px solid #eee; font-size: 0.85rem; color: #475569;">${p.bankname || '-'}</td>
+                <td style="padding: 0.75rem 1rem; border-bottom: 1px solid #eee; font-size: 0.8rem; color: #666;">${p.note || '-'}</td>
+                <td style="padding: 0.75rem 1rem; border-bottom: 1px solid #eee; text-align: center;">
+                    <button class="btn" style="padding: 0.2rem 0.4rem; font-size: 0.8rem; margin-right: 0.4rem;" onclick="editPayee('${p.payeeid}')">✏️</button>
+                    <button class="btn" style="padding: 0.2rem 0.4rem; font-size: 0.8rem; background: #fee2e2; color: #dc2626;" onclick="deletePayee('${p.payeeid}')">🗑️</button>
+                </td>`;
+            tbody.appendChild(tr);
+        });
+    };
+
+    // --- FINANCIAL FUNCTIONS (Manga Sales) ---
+    let financialSalesList = [];
+    let chartWebsiteRevenueInstance = null;
+    let chartMonthlyRevenueInstance = null;
+    let chartWebsiteShareInstance = null;
+
+    window.initFinancialFilters = function () {
+        const monthSelect = document.getElementById('finMonthFilter');
+        const yearSelect = document.getElementById('finYearFilter');
+        if (!monthSelect || !yearSelect) return;
+
+        const thaiMonths = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"];
+        monthSelect.innerHTML = '<option value="all">เดือน: ทั้งหมด</option>';
+        thaiMonths.forEach((m, i) => {
+            const opt = document.createElement('option');
+            opt.value = (i + 1).toString();
+            opt.textContent = m;
+            monthSelect.appendChild(opt);
+        });
+
+        const now = new Date();
+        const currentYear = now.getFullYear();
+        yearSelect.innerHTML = '<option value="all">ปี: ทั้งหมด</option>';
+        for (let i = 0; i < 6; i++) {
+            const y = currentYear - i;
+            const opt = document.createElement('option');
+            opt.value = y.toString();
+            opt.textContent = (y + 543).toString();
+            yearSelect.appendChild(opt);
+        }
+        monthSelect.value = (now.getMonth() + 1).toString();
+        yearSelect.value = 'all';
+    };
+
+    window.loadFinancialData = function () {
+        showLoader(true);
+        google.script.run
+            .withSuccessHandler(data => {
+                financialSalesList = Array.isArray(data.sales) ? data.sales : [];
+                mangaList = Array.isArray(data.manga) ? data.manga : [];
+                websiteList = data.websites || [];
+
+                populateFinancialMangaDropdown(mangaList);
+                populateWebsiteDropdown(websiteList);
+
+                renderFinancialTable();
+                renderFinancialCharts(financialSalesList);
+                showLoader(false);
+            })
+            .withFailureHandler(onError)
+            .getFinancialInitData();
+    };
+
+    window.renderFinancialTable = function () {
+        const tbody = document.getElementById('financialTableBody');
+        const monthVal = document.getElementById('finMonthFilter').value;
+        const yearVal = document.getElementById('finYearFilter').value;
+
+        if (!tbody) return;
+        tbody.innerHTML = '';
+
+        let filtered = financialSalesList;
+        if (monthVal !== 'all' || yearVal !== 'all') {
+            filtered = filtered.filter(s => {
+                const d = new Date(s.date);
+                const mMatch = monthVal === 'all' || (d.getMonth() + 1).toString() === monthVal;
+                const yMatch = yearVal === 'all' || d.getFullYear().toString() === yearVal;
+                return mMatch && yMatch;
+            });
+        }
+
+        let totalRev = 0, totalCost = 0;
+
+        filtered.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+        filtered.forEach((s, idx) => {
+            const rev = parseFloat(s.revenue) || 0;
+            const cost = parseFloat(s.totalcost) || 0;
+            const profit = rev - cost;
+
+            totalRev += rev;
+            totalCost += cost;
+
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td style="padding: 1rem; border-bottom: 1px solid #eee;">
+                    <div style="font-weight: 600;">${s.seriesname}</div>
+                    <div style="font-size: 0.75rem; color: #64748b;">${new Date(s.date).toLocaleDateString('th-TH')}</div>
+                </td>
+                <td style="padding: 1rem; border-bottom: 1px solid #eee; text-align: center;">${s.chapterscount}</td>
+                <td style="padding: 1rem; border-bottom: 1px solid #eee; text-align: right;">${parseFloat(s.costperchapter).toLocaleString()} ฿</td>
+                <td style="padding: 1rem; border-bottom: 1px solid #eee; text-align: right;">${cost.toLocaleString()} ฿</td>
+                <td style="padding: 1rem; border-bottom: 1px solid #eee; text-align: right; font-weight: 600;">${rev.toLocaleString()} ฿</td>
+                <td style="padding: 1rem; border-bottom: 1px solid #eee; text-align: right;">
+                    <span style="padding: 0.25rem 0.5rem; border-radius:1rem; font-size: 0.75rem; font-weight: 600; background: ${profit >= 0 ? '#dcfce7' : '#fee2e2'}; color: ${profit >= 0 ? '#166534' : '#991b1b'};">
+                        ${profit.toLocaleString()} ฿
+                    </span>
+                </td>
+                <td style="padding: 1rem; border-bottom: 1px solid #eee; text-align: center;">
+                    <button class="btn" style="padding: 0.25rem 0.5rem; background: #fee2e2; color: #dc2626;" onclick="deleteFinancialRecord(${idx})">🗑️</button>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+
+        // Update stats
+        setTextIfExist('totalRevenueM', totalRev.toLocaleString(undefined, { minimumFractionDigits: 2 }) + ' ฿');
+        setTextIfExist('totalCostM', totalCost.toLocaleString(undefined, { minimumFractionDigits: 2 }) + ' ฿');
+        setTextIfExist('totalProfitM', (totalRev - totalCost).toLocaleString(undefined, { minimumFractionDigits: 2 }) + ' ฿');
+
+        renderRankings(filtered);
+        renderFinancialCharts(filtered);
+    };
+
+    function renderRankings(data) {
+        const profitList = document.getElementById('topProfitList');
+        const lossList = document.getElementById('topLossList');
+        if (!profitList || !lossList) return;
+
+        // Aggregate by manga
+        const summaryMap = {};
+        data.forEach(s => {
+            const name = s.seriesname || 'Unknown';
+            const profit = (parseFloat(s.revenue) || 0) - (parseFloat(s.totalcost) || 0);
+            if (!summaryMap[name]) summaryMap[name] = 0;
+            summaryMap[name] += profit;
+        });
+
+        const sorted = Object.keys(summaryMap).map(name => ({ name, profit: summaryMap[name] }));
+
+        // Render Profit Rankings
+        const profits = sorted.filter(p => p.profit > 0).sort((a, b) => b.profit - a.profit).slice(0, 10);
+        profitList.innerHTML = profits.length ? profits.map((p, idx) => `
+            <div style="display: flex; justify-content: space-between; padding: 0.5rem 0; border-bottom: 1px solid #f1f5f9;">
+                <span>${idx + 1}. ${p.name}</span>
+                <span style="color: #16a34a; font-weight: 600;">+${p.profit.toLocaleString()} ฿</span>
+            </div>
+        `).join('') : '<p style="color: #94a3b8; text-align: center; padding: 1rem;">ไม่มีข้อมูลกำไร</p>';
+
+        // Render Loss Rankings
+        const losses = sorted.filter(p => p.profit < 0).sort((a, b) => a.profit - b.profit).slice(0, 10);
+        lossList.innerHTML = losses.length ? losses.map((p, idx) => `
+            <div style="display: flex; justify-content: space-between; padding: 0.5rem 0; border-bottom: 1px solid #f1f5f9;">
+                <span>${idx + 1}. ${p.name}</span>
+                <span style="color: #dc2626; font-weight: 600;">${p.profit.toLocaleString()} ฿</span>
+            </div>
+        `).join('') : '<p style="color: #94a3b8; text-align: center; padding: 1rem;">ไม่มีข้อมูลขาดทุน</p>';
+    }
+
+    window.openFinancialModal = function () {
+        document.getElementById('financialForm').reset();
+        if (typeof SlimSelect !== 'undefined' && ssFinManga) ssFinManga.setSelected('');
+        document.getElementById('finDate').valueAsDate = new Date();
+
+        // Ensure dropdowns are populated when opening
+        populateFinancialMangaDropdown(mangaList);
+        populateWebsiteDropdown(websiteList);
+
+        document.getElementById('financialModal').style.display = 'flex';
+    };
+
+    window.populateFinancialMangaDropdown = function (manga) {
+        const select = document.getElementById('finMangaId');
+        if (!select) return;
+        const currentVal = select.value;
+        select.innerHTML = '<option value="">เลือกมังงะ...</option>';
+        manga.forEach(m => {
+            const opt = document.createElement('option');
+            opt.value = m.mangaid;
+            opt.textContent = m.manganame;
+            select.appendChild(opt);
+        });
+        if (currentVal) select.value = currentVal;
+
+        // Initialize/Update SlimSelect
+        if (typeof SlimSelect !== 'undefined') {
+            if (!ssFinManga) {
+                ssFinManga = new SlimSelect({
+                    select: '#finMangaId',
+                    settings: {
+                        placeholderText: 'เลือกมังงะ...',
+                        searchPlaceholderText: 'ค้นหามังงะ...',
+                    },
+                    events: {
+                        afterChange: () => {
+                            if (typeof autoFillFinDetails === 'function') {
+                                autoFillFinDetails();
+                            }
+                        }
+                    }
+                });
+            } else {
+                ssFinManga.setData(manga.map(m => ({ text: m.manganame, value: String(m.mangaid ?? '') })));
+                // Ensure the placeholder is still there if empty
+                if (!currentVal) {
+                    ssFinManga.setSelected('');
+                } else {
+                    ssFinManga.setSelected(currentVal.toString());
+                }
+            }
+        }
+    };
+
+    window.autoFillFinDetails = function () {
+        const mangaId = document.getElementById('finMangaId').value;
+        const dateVal = document.getElementById('finDate').value;
+        if (!mangaId || !dateVal) return;
+
+        const manga = mangaList.find(m => m.mangaid != null && String(m.mangaid) === String(mangaId));
+        if (!manga) return;
+
+        const d = new Date(dateVal);
+        const year = d.getFullYear();
+        const month = d.getMonth() + 1;
+
+        document.getElementById('finCostPerChapter').value = manga.costperchapter || 0;
+
+        // Call GAS to count chapters from WorkQueue (Read-Only)
+        google.script.run
+            .withSuccessHandler(count => {
+                document.getElementById('finChapters').value = count || 0;
+            })
+            .withFailureHandler(err => {
+                console.error('Count chapters error:', err);
+                document.getElementById('finChapters').value = 0;
+            })
+            .countFinishedChapters(mangaId, year, month);
+    };
+
+    window.handleFinancialSubmit = function (e) {
+        e.preventDefault();
+        const mangaId = document.getElementById('finMangaId').value;
+        const manga = mangaList.find(m => m.mangaid != null && String(m.mangaid) === String(mangaId));
+
+        const chapterStr = document.getElementById('finChapters').value;
+        const chapters = getChapterCount(chapterStr, true); // True because in Financial, "50" means 50 chapters
+        const costPer = parseFloat(document.getElementById('finCostPerChapter').value) || 0;
+        const rev = parseFloat(document.getElementById('finRevenue').value) || 0;
+
+        const saleData = {
+            date: document.getElementById('finDate').value,
+            seriesname: manga ? manga.manganame : '',
+            serieschapterid: mangaId,
+            chapterscount: chapters, // Numeric count for internal calcs
+            chaptersrange: chapterStr, // Preserve original range string if possible
+            costperchapter: costPer,
+            totalcost: chapters * costPer,
+            revenue: rev,
+            website: document.getElementById('finWebsite').value
+        };
+
+        showLoader(true);
+        google.script.run
+            .withSuccessHandler(res => {
+                showLoader(false);
+                if (res.error) Swal.fire('Error', res.error, 'error');
+                else {
+                    closeModal('financialModal');
+                    showToast('บันทึกยอดขายเรียบร้อย');
+                    financialSalesList = res.list;
+                    renderFinancialTable();
+                }
+            })
+            .withFailureHandler(onError)
+            .addMangaSale(saleData);
+    };
+
+    window.deleteFinancialRecord = function (idx) {
+        Swal.fire({ title: 'ลบรายการนี้?', icon: 'warning', showCancelButton: true, confirmButtonText: 'ลบข้อมูล' }).then(result => {
+            if (result.isConfirmed) {
+                showLoader(true);
+                google.script.run
+                    .withSuccessHandler(res => {
+                        showLoader(false);
+                        financialSalesList = res.list;
+                        renderFinancialTable();
+                        showToast('ลบรายการเรียบร้อย');
+                    })
+                    .withFailureHandler(onError)
+                    .deleteMangaSale(idx);
+            }
+        });
+    };
+
+    window.handleBulkImport = function () {
+        const text = document.getElementById('bulkImportText').value.trim();
+        if (!text) {
+            Swal.fire('Warning', 'กรุณาวางข้อมูลก่อนกดนำเข้า', 'warning');
+            return;
+        }
+
+        const lines = text.split('\n');
+        const sales = [];
+
+        // Detect delimiter: Check if more tabs or commas in the first few non-empty lines
+        let delimiter = '\t';
+        const sampleLines = lines.slice(0, 5).filter(l => l.trim());
+        if (sampleLines.length > 0) {
+            const tabs = (sampleLines[0].match(/\t/g) || []).length;
+            const commas = (sampleLines[0].match(/,/g) || []).length;
+            if (commas > tabs) delimiter = ',';
+        }
+
+        console.log('Detected delimiter:', delimiter === '\t' ? 'TAB' : 'COMMA');
+
+        function parseLine(line) {
+            const result = [];
+            let cur = '';
+            let inQuote = false;
+            for (let i = 0; i < line.length; i++) {
+                const char = line[i];
+                if (char === '"') {
+                    inQuote = !inQuote;
+                } else if (char === delimiter && !inQuote) {
+                    result.push(cur.trim());
+                    cur = '';
+                } else {
+                    cur += char;
+                }
+            }
+            result.push(cur.trim());
+            // Remove surround quotes and handle escaped double quotes
+            return result.map(s => s.replace(/^"|"$/g, '').replace(/""/g, '"').trim());
+        }
+
+        try {
+            lines.forEach((line) => {
+                if (!line.trim()) return;
+                const cols = parseLine(line);
+
+                // Header row or non-data row check
+                if (cols.length < 10) return; // Allow some missing columns if needed, but at least 10
+                if (cols[0].includes('วันที่') || cols[3]?.includes('เรื่อง')) return;
+
+                const cleanNum = (str) => {
+                    if (!str) return 0;
+                    // Remove commas and handle parentheses for negative numbers if any
+                    let cleaned = str.replace(/,/g, '').trim();
+                    if (cleaned.startsWith('(') && cleaned.endsWith(')')) {
+                        cleaned = '-' + cleaned.substring(1, cleaned.length - 1);
+                    }
+                    return parseFloat(cleaned) || 0;
+                };
+
+                // Date normalization logic
+                let dateStr = cols[0].trim();
+                let day = '30', monthStr = '01', year = 2025;
+
+                const dateParts = dateStr.split('/');
+                if (dateParts.length === 3) {
+                    day = dateParts[0].padStart(2, '0');
+                    monthStr = dateParts[1].padStart(2, '0');
+                    let yr = parseInt(dateParts[2]);
+
+                    // Handle BE (2568) or short BE (68) or CE interpretations
+                    if (yr > 2500) year = yr - 543;
+                    else if (yr === 68 || yr === 25) year = 2025;
+                    else if (yr === 1968) year = 2025; // Spreadsheet bug often maps 68 BE to 1968 CE
+                    else if (yr < 100) year = 2000 + yr;
+                    else year = yr;
+                } else {
+                    // Fallback to month column (expected YYYY-MM or similar)
+                    const mParts = cols[1].split('-');
+                    if (mParts.length >= 2) {
+                        year = parseInt(mParts[0]);
+                        if (year === 1968) year = 2025;
+                        monthStr = mParts[1];
+                    }
+                }
+                const normalizedDate = `${year}-${monthStr.padStart(2, '0')}-${day.padStart(2, '0')}`;
+
+                // Mapping based on the user's CSV (index 4 is skipped "ตอน")
+                // User clarified that index 9 (Col 10) is the "Monthly Target" (not per chapter)
+                const monthlyTarget = cleanNum(cols[9]);
+                const chapters = cleanNum(cols[5]);
+
+                sales.push({
+                    date: normalizedDate,
+                    month: cols[1].trim(),
+                    serieschapterid: cols[2].trim(),
+                    seriesname: cols[3].trim(),
+                    chapterscount: chapters,
+                    category: cols[6].trim(),
+                    website: (cols[7] === 'websiteA.co') ? "ช่องทาง Readrealm" : (cols[7] || "ช่องทาง Readrealm"),
+                    page: (cols[8] || "Page").trim(),
+                    targetperchapter: chapters > 0 ? (monthlyTarget / chapters) : monthlyTarget,
+                    totaltarget: monthlyTarget,
+                    costperchapter: cleanNum(cols[11]),
+                    totalcost: cleanNum(cols[12]),
+                    revenue: monthlyTarget // Use Monthly Target as revenue base
+                });
+            });
+
+            if (sales.length === 0) {
+                Swal.fire('Error', 'ไม่พบข้อมูลที่ถูกต้อง กรุณาใช้ข้อมูลแบบคั่นด้วย Tab หรือ CSV', 'error');
+                return;
+            }
+
+            Swal.fire({
+                title: 'ยืนยันการนำเข้า',
+                text: `ตรวจพบข้อมูล ${sales.length} รายการ ต้องการนำเข้าหรือไม่ ? `,
+                icon: 'question',
+                showCancelButton: true,
+                confirmButtonText: 'ตกลง',
+                cancelButtonText: 'ยกเลิก'
+            }).then((result) => {
+                if (result.isConfirmed) {
+                    showLoader(true);
+                    google.script.run
+                        .withSuccessHandler(res => {
+                            showLoader(false);
+                            if (res.error) Swal.fire('Error', res.error, 'error');
+                            else {
+                                Swal.fire('สำเร็จ', `นำเข้าข้อมูล ${res.count} รายการเรียบร้อย`, 'success');
+                                document.getElementById('bulkImportModal').style.display = 'none';
+                                document.getElementById('bulkImportText').value = '';
+
+                                google.script.run
+                                    .withSuccessHandler(data => {
+                                        financialSalesList = data.sales || [];
+                                        renderFinancialTable();
+                                    })
+                                    .getFinancialInitData();
+                            }
+                        })
+                        .withFailureHandler(onError)
+                        .bulkAddMangaSales(sales);
+                }
+            });
+        } catch (e) {
+            Swal.fire('Error', 'เกิดข้อผิดพลาด: ' + e.message, 'error');
+        }
+    };
+
+    window.renderFinancialCharts = function (sales) {
+        if (!sales || sales.length === 0) return;
+
+        // --- Aggregate Data ---
+        // 1. Total Revenue per Website (for Bar & Pie)
+        const websiteRevenue = {};
+        // 2. Monthly Revenue per Website (for Line) -> Structure: { "2024-01": { "MangaPlus": 100, "Kakao": 200 } }
+        const monthlyWebsiteRevenue = {};
+        const websitesSet = new Set();
+        const allMonthsSet = new Set();
+
+        sales.forEach(s => {
+            const web = s.website || 'Other';
+            const rev = parseFloat(s.revenue) || 0;
+            const cost = parseFloat(s.totalcost) || 0;
+            const net = rev - cost;
+
+            // Use manual split or getUTC to avoid timezone shift from GAS to browser
+            let y, m;
+            if (s.date && s.date.includes('T')) {
+                const dt = new Date(s.date);
+                y = dt.getUTCFullYear();
+                m = dt.getUTCMonth() + 1;
+            } else {
+                const dParts = s.date.toString().split('-');
+                y = parseInt(dParts[0]);
+                m = parseInt(dParts[1]);
+            }
+            const monthKey = `${y}-${String(m).padStart(2, '0')}`;
+
+            // Total Net (for Share & Website Stats)
+            websiteRevenue[web] = (websiteRevenue[web] || 0) + rev; // Keep rev for share pie if desired, but net for trend
+
+            // Monthly Net
+            if (!monthlyWebsiteRevenue[monthKey]) monthlyWebsiteRevenue[monthKey] = {};
+            // Aggregating Net for the trend chart
+            monthlyWebsiteRevenue[monthKey][web] = (monthlyWebsiteRevenue[monthKey][web] || 0) + net;
+
+            websitesSet.add(web);
+            allMonthsSet.add(monthKey);
+        });
+
+        const websites = Array.from(websitesSet).sort();
+        const months = Array.from(allMonthsSet).sort(); // Sort chronological
+
+        // Generate Color Palette
+        const colors = [
+            '#4f46e5', '#16a34a', '#db2777', '#ca8a04', '#2563eb', '#9333ea', '#ea580c', '#0891b2'
+        ];
+        const websiteColors = {};
+        websites.forEach((w, i) => websiteColors[w] = colors[i % colors.length]);
+
+        // --- Chart 1: Horizontal Bar (Revenue by Website) ---
+        const ctxBar = document.getElementById('chartWebsiteRevenue').getContext('2d');
+        if (chartWebsiteRevenueInstance) chartWebsiteRevenueInstance.destroy();
+
+        const barData = websites.map(w => websiteRevenue[w]);
+
+        chartWebsiteRevenueInstance = new Chart(ctxBar, {
+            type: 'bar',
+            data: {
+                labels: websites,
+                datasets: [{
+                    label: 'พอร์ตรายรับ (รวม)',
+                    data: barData,
+                    backgroundColor: websites.map(w => websiteColors[w] + 'CC'), // Semi-transparent
+                    borderColor: websites.map(w => websiteColors[w]),
+                    borderWidth: 1,
+                    borderRadius: 8,
+                    barThickness: 12
+                }]
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false }
+                },
+                scales: {
+                    x: { display: false, grid: { display: false } },
+                    y: {
+                        grid: { display: false },
+                        ticks: { font: { size: 11 } }
+                    }
+                }
+            }
+        });
+
+        // --- Chart 2: Pie Chart (Revenue Share) ---
+        const ctxPie = document.getElementById('chartWebsiteShare').getContext('2d');
+        if (chartWebsiteShareInstance) chartWebsiteShareInstance.destroy();
+
+        chartWebsiteShareInstance = new Chart(ctxPie, {
+            type: 'doughnut',
+            data: {
+                labels: websites,
+                datasets: [{
+                    data: barData,
+                    backgroundColor: websites.map(w => websiteColors[w]),
+                    borderWidth: 4,
+                    borderColor: '#ffffff',
+                    hoverOffset: 15
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                cutout: '70%',
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            usePointStyle: true,
+                            pointStyle: 'circle',
+                            padding: 20,
+                            font: { size: 10 }
+                        }
+                    }
+                }
+            }
+        });
+
+        // --- Chart 3: Line Chart (Monthly Revenue Breakdown) ---
+        const ctxLine = document.getElementById('chartMonthlyRevenue').getContext('2d');
+        if (chartMonthlyRevenueInstance) chartMonthlyRevenueInstance.destroy();
+
+        const lineDatasets = websites.map(w => {
+            const color = websiteColors[w];
+            // Create Gradient
+            const gradient = ctxLine.createLinearGradient(0, 0, 0, 300);
+            gradient.addColorStop(0, color + '44'); // Transparent
+            gradient.addColorStop(1, color + '00');
+
+            return {
+                label: w,
+                data: months.map(m => monthlyWebsiteRevenue[m][w] || 0),
+                borderColor: color,
+                backgroundColor: gradient,
+                borderWidth: 3,
+                pointRadius: 0,
+                pointHoverRadius: 6,
+                pointHoverBackgroundColor: color,
+                pointHoverBorderColor: '#fff',
+                pointHoverBorderWidth: 2,
+                tension: 0.4, // Smooth curve
+                fill: true
+            };
+        });
+
+        // Prepare labels for X-Axis (Convert 2024-01 -> ม.ค. 67)
+        const thaiMonths = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
+        const lineLabels = months.map(m => {
+            const [y, mo] = m.split('-');
+            if (!y || !mo) return m;
+            return `${thaiMonths[parseInt(mo) - 1]} ${parseInt(y) + 543}`;
+        });
+
+        chartMonthlyRevenueInstance = new Chart(ctxLine, {
+            type: 'line',
+            data: {
+                labels: lineLabels,
+                datasets: lineDatasets
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {
+                    mode: 'index',
+                    intersect: false,
+                },
+                plugins: {
+                    legend: {
+                        position: 'top',
+                        align: 'end',
+                        labels: {
+                            usePointStyle: true,
+                            pointStyle: 'circle',
+                            font: { size: 11 }
+                        }
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(30, 41, 59, 0.9)',
+                        titleFont: { size: 13 },
+                        bodyFont: { size: 12 },
+                        padding: 12,
+                        cornerRadius: 8,
+                        displayColors: true,
+                        callbacks: {
+                            label: function (context) {
+                                let label = context.dataset.label || '';
+                                if (label) label += ': ';
+                                if (context.parsed.y !== null) {
+                                    label += new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB' }).format(context.parsed.y);
+                                }
+                                return label;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: { display: false },
+                        ticks: { font: { size: 10 } }
+                    },
+                    y: {
+                        beginAtZero: false, // Allow negative for loss
+                        grid: { color: '#26334d' },
+                        ticks: {
+                            font: { size: 10 },
+                            callback: function (value) {
+                                return value.toLocaleString() + ' ฿';
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    };
+
+    window.populatePayeeDropdown = function (data) {
+        const select = document.getElementById('transPayeeSelect');
+        if (!select) return;
+        select.innerHTML = '<option value="">-- เลือกผู้รับเงิน --</option>';
+        data.forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = p.name;
+            opt.textContent = p.name;
+            select.appendChild(opt);
+        });
+
+        // Initialize/Update SlimSelect
+        if (typeof SlimSelect !== 'undefined') {
+            if (!ssPayee) {
+                ssPayee = new SlimSelect({
+                    select: '#transPayeeSelect',
+                    settings: {
+                        placeholderText: '-- เลือกผู้รับเงิน --',
+                        searchPlaceholderText: 'ค้นหารายชื่อ...',
+                    }
+                });
+            } else {
+                ssPayee.setData([{ text: '-- เลือกผู้รับเงิน --', value: '' }, ...data.map(p => ({ text: p.name, value: p.name }))]);
+            }
+        }
+    };
+
+    // --- ROBUST HEARTBEAT SYSTEM ---
+    function startHeartbeat() {
+        // Interval runs every 1 second to update UI and check watchdog
+        setInterval(() => {
+            const now = new Date();
+            const diffMs = nextRefreshTimestamp - now;
+            const diffSec = Math.max(0, Math.floor(diffMs / 1000));
+
+            // Update Countdown UI
+            const countdownEl = document.getElementById('countdownText');
+            if (countdownEl) countdownEl.textContent = diffSec;
+
+            // Trigger Refresh if due
+            if (diffSec <= 0 && !isRefreshing) {
+                performRefresh();
+            }
+        }, 1000);
+    }
+
+    function performRefresh() {
+        if (isRefreshing) {
+            console.warn('Heartbeat: Refresh already in progress, skipping...');
+            return;
+        }
+        isRefreshing = true;
+
+        // Watchdog: If GAS doesn't respond in 2 minutes, force reset
+        clearTimeout(refreshWatchdog);
+        refreshWatchdog = setTimeout(() => {
+            if (isRefreshing) {
+                console.error('Heartbeat: GAS call timed out after 2 minutes. Force resetting...');
+                isRefreshing = false;
+                updateRefreshTimestamps(false);
+            }
+        }, 120000);
+
+        console.log('Heartbeat: Triggering refresh...');
+        updateRefreshTimestamps(true); // Show "Refreshing..."
+
+        google.script.run
+            .withSuccessHandler(data => {
+                clearTimeout(refreshWatchdog);
+                if (!data) {
+                    console.error('Heartbeat: Received null data');
+                    isRefreshing = false;
+                    updateRefreshTimestamps(false);
+                    return;
+                }
+
+                // Update all global lists
+                mangaList = Array.isArray(data.manga) ? data.manga : mangaList;
+                queueList = Array.isArray(data.queue) ? data.queue : queueList;
+                teamList = Array.isArray(data.team) ? data.team : teamList;
+                financialSalesList = Array.isArray(data.sales) ? data.sales : financialSalesList;
+                payeeList = Array.isArray(data.payees) ? data.payees : payeeList;
+                transactionList = Array.isArray(data.transactions) ? data.transactions : transactionList;
+                websiteList = Array.isArray(data.websites) ? data.websites : websiteList;
+
+                // Sync UI Components
+                updateGlobalStats();
+                updateQueueStats(queueList);
+                populateMangaDropdown(mangaList);
+                populateFinancialMangaDropdown(mangaList);
+                populateWebsiteDropdown(websiteList);
+                populateTeamDropdowns(teamList);
+                populateAssigneeFilter(teamList);
+                populatePayeeDropdown(payeeList);
+
+                // Re-render currently active view
+                const activeNav = document.querySelector('.nav-item.active');
+                if (activeNav) {
+                    const viewId = activeNav.id.replace('nav-', '');
+                    console.log('Heartbeat: Re-rendering active view:', viewId);
+                    try {
+                        if (viewId === 'dashboard') renderDashboard();
+                        else if (viewId === 'queue') filterQueue();
+                        else if (viewId === 'team') renderTeamTable(teamList || []);
+                        else if (viewId === 'financials') renderFinancialTable();
+                        else if (viewId === 'budget') filterBudgetTable();
+                        else if (viewId === 'settings') renderMangaTable(mangaList || []);
+                    } catch (e) {
+                        console.error('Heartbeat: Error rendering view:', e);
+                    }
+                }
+
+                // Update timestamps for next cycle
+                lastRefreshTimestamp = new Date();
+                nextRefreshTimestamp = new Date(lastRefreshTimestamp.getTime() + REFRESH_INTERVAL);
+                isRefreshing = false;
+                updateRefreshTimestamps(false);
+                console.log('Heartbeat: Refresh success at ' + lastRefreshTimestamp.toLocaleTimeString());
+            })
+            .withFailureHandler(err => {
+                clearTimeout(refreshWatchdog);
+                console.error('Heartbeat: Refresh failed:', err);
+                lastRefreshTimestamp = new Date();
+                nextRefreshTimestamp = new Date(lastRefreshTimestamp.getTime() + REFRESH_INTERVAL);
+                isRefreshing = false;
+                updateRefreshTimestamps(false);
+            })
+            .getDashboardData();
+    }
+
+    // Helper: Update refresh timestamps in UI
+    function updateRefreshTimestamps(isLoading) {
+        const lastEl = document.getElementById('lastFetchTime');
+        const nextEl = document.getElementById('nextFetchTime');
+        const statusText = document.getElementById('refreshStatusText');
+        const icon = document.querySelector('.pulse-icon');
+
+        if (isLoading) {
+            if (statusText) statusText.textContent = 'กำลังดึงข้อมูล...';
+            if (icon) {
+                icon.style.background = '#f59e0b'; // Amber for loading
+                icon.classList.add('loading-spin');
+            }
+        } else {
+            if (statusText) statusText.textContent = 'สถานะคลาวด์: เชื่อมต่อปกติ';
+            if (icon) {
+                icon.style.background = '#22c55e'; // Green for OK
+                icon.classList.remove('loading-spin');
+            }
+            if (lastEl) lastEl.textContent = lastRefreshTimestamp.toLocaleTimeString('th-TH');
+            if (nextEl) nextEl.textContent = nextRefreshTimestamp.toLocaleTimeString('th-TH');
+        }
+    }
+
+    // Modal Outside Click
+    window.onclick = function (event) {
+        if (event.target == document.getElementById('mangaModalNew')) closeMangaModal();
+        if (event.target == document.getElementById('queueModal')) closeQueueModal();
+        if (event.target == document.getElementById('teamModal')) closeTeamModal();
+        if (event.target == document.getElementById('transactionModal')) closeTransactionModal();
+        if (event.target == document.getElementById('payeeModal')) closePayeeModal();
+        if (event.target == document.getElementById('financialModal')) closeModal('financialModal');
+    };
+
+    window.closeModal = function (id) {
+        const modal = document.getElementById(id);
+        if (modal) modal.style.display = 'none';
+    };
+
+    window.refreshData = function (isForce = false) {
+        // This function is now only called by auto-refresh timer or Manual Refresh
+        // It will check cache age and only reload if needed
+        const currentView = getCurrentView();
+
+        console.log('Refresh triggered for view:', currentView, 'Force:', isForce);
+
+        if (currentView === 'dashboard' || currentView === 'settings') {
+            loadMangaData();
+        } else if (currentView === 'queue') {
+            loadQueueData(isForce);
+        } else if (currentView === 'team') {
+            loadTeamData();
+        } else if (currentView === 'budget') {
+            loadBudgetData();
+        } else if (currentView === 'financials') {
+            loadFinancialData();
+        }
+    };
+
+    window.manualRefresh = function () {
+        showLoader(true);
+        // If on Dashboard, we actually need to reload Queue AND Manga stats usually.
+        // But for "Missing Queue Item", refreshing queue is the priority.
+        // Let's force load queue data which updates the calendar and pending list on Dashboard.
+        loadQueueData(true);
+    };
+
+    function getCurrentView() {
+        const views = ['dashboard-view', 'queue-view', 'settings-view', 'team-view', 'budget-view', 'financials-view'];
+        for (const v of views) {
+            const el = document.getElementById(v);
+            if (el && el.style.display === 'block') {
+                return v.replace('-view', '');
+            }
+        }
+        return '';
+    }
+
+    // View Switcher
+    // View Switcher
+    window.switchView = function (view, skipAuth = false) {
+        // Passcode Protection for sensitive views - Asked every time
+        if ((view === 'financials' || view === 'budget') && !skipAuth) {
+            Swal.fire({
+                title: 'กรุณากรอกรหัสผ่าน',
+                input: 'password',
+                inputAttributes: {
+                    autocapitalize: 'off',
+                    autocorrect: 'off'
+                },
+                showCancelButton: true,
+                confirmButtonText: 'ยืนยัน',
+                cancelButtonText: 'ยกเลิก',
+                showLoaderOnConfirm: true,
+                preConfirm: (pass) => {
+                    return new Promise((resolve, reject) => {
+                        google.script.run
+                            .withSuccessHandler(isValid => {
+                                if (isValid) resolve(true);
+                                else {
+                                    Swal.showValidationMessage('รหัสผ่านไม่ถูกต้อง');
+                                    resolve(false);
+                                }
+                            })
+                            .withFailureHandler(err => {
+                                Swal.showValidationMessage('เกิดข้อผิดพลาดในการตรวจสอบ');
+                                resolve(false);
+                            })
+                            .verifyPasscode(pass);
+                    });
+                },
+                allowOutsideClick: () => !Swal.isLoading()
+            }).then((result) => {
+                if (result.isConfirmed) {
+                    isAuthorized = true;
+                    switchView(view, true); // Use skipAuth=true to prevent infinite loop
+                }
+            });
+            return;
+        }
+
+        console.log('Switching view to:', view);
+        try {
+            // Hide all views
+            const views = ['dashboard-view', 'queue-view', 'settings-view', 'team-view', 'budget-view', 'financials-view'];
+            views.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.style.display = 'none';
+            });
+
+            // Remove active class from all nav items
+            document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
+
+            // Show selected view
+            const viewMap = {
+                'dashboard': 'dashboard-view',
+                'queue': 'queue-view',
+                'settings': 'settings-view',
+                'team': 'team-view',
+                'budget': 'budget-view',
+                'financials': 'financials-view'
+            };
+
+            const targetId = viewMap[view];
+            if (targetId) {
+                const el = document.getElementById(targetId);
+                if (el) el.style.display = 'block';
+
+                const navId = 'nav-' + view;
+                const navEl = document.getElementById(navId);
+                if (navEl) navEl.classList.add('active');
+
+                // Load Data for specific views (Lazy Load)
+                if (view === 'dashboard') {
+                    if (mangaList.length === 0) loadMangaData();
+                    else renderDashboard();
+                }
+                else if (view === 'queue') {
+                    if (queueList.length === 0) loadQueueData();
+                    else {
+                        filterQueue();
+                        updateGlobalStats();
+                        updateQueueStats(queueList);
+                    }
+                }
+                else if (view === 'settings') {
+                    if (mangaList.length === 0) loadMangaData();
+                    else renderMangaTable(mangaList);
+                }
+                else if (view === 'team') {
+                    if (teamList.length === 0) loadTeamData();
+                    else renderTeamTable(teamList);
+                }
+                else if (view === 'budget') {
+                    if (payeeList.length === 0 || transactionList.length === 0) loadBudgetData();
+                    else filterBudgetTable();
+                }
+                else if (view === 'financials') {
+                    initFinancialFilters();
+                    if (financialSalesList.length === 0) loadFinancialData();
+                    else {
+                        renderFinancialTable();
+                        renderFinancialCharts(financialSalesList);
+                    }
+                }
+            }
+        } catch (e) {
+            console.error('Error in switchView:', e);
+            Swal.fire('Error', 'Navigation failed: ' + e.message, 'error');
+        }
+
+
+        // Auto-close sidebar on mobile only
+        if (window.innerWidth <= 768) {
+            document.body.classList.remove('mobile-open');
+            document.querySelector('.sidebar-overlay').classList.remove('active');
+        }
+
+    };
+
+    function toggleSidebar() {
+        const overlay = document.querySelector('.sidebar-overlay');
+
+        if (window.innerWidth <= 768) {
+            // Mobile: Toggle Overlay Mode
+            document.body.classList.toggle('mobile-open');
+            overlay.classList.toggle('active');
+        } else {
+            // Desktop: Toggle Collapsed Mode
+            document.body.classList.toggle('desktop-closed');
+        }
+    }
+
+    // Load Data
+    function loadMangaData() {
+        showLoader(true);
+        google.script.run
+            .withSuccessHandler(onDataLoaded)
+            .withFailureHandler(onError)
+            .getMangaList();
+    }
+
+    function onDataLoaded(data) {
+        mangaList = Array.isArray(data) ? data : [];
+        renderDashboard();
+        renderMangaTable(mangaList);
+        populateMangaDropdown(mangaList);
+        loadTeamData();
+        showLoader(false);
+    }
+
+    function loadQueueData(isForce = false) {
+        showLoader(true);
+        google.script.run
+            .withSuccessHandler(data => {
+                queueList = Array.isArray(data) ? data : [];
+                filterQueue(); // Use filter instead of rendering all
+                updateQueueStats(queueList);
+                renderDashboard();
+                showLoader(false);
+                if (isForce) showToast('Refreshed Data (Bypassing Cache)');
+            })
+            .withFailureHandler(err => {
+                showLoader(false);
+                onError(err);
+            })
+            .getWorkQueue(isForce);
+    }
+
+
+
+
+
+    // --- QUEUE STATS ---
+    function updateQueueStats(data) {
+        if (!data) return;
+
+        let finished = 0, waitUpload = 0, waitExtract = 0, waitTranslate = 0, waitTypeset = 0, waitPublish = 0, waitPost = 0;
+        const isDone = (s) => {
+            const str = (s || '').toString().trim();
+            return str === 'เสร็จแล้ว' || str === 'Skipped' || str === 'ข้าม' || str.toLowerCase() === 'done';
+        };
+        const getStatus = (s) => (s === undefined || s === null || String(s).trim() === '') ? 'รอเริ่ม' : String(s).trim();
+
+        data.forEach(q => {
+            const count = getChapterCount(q.chapter);
+            const postSt = getStatus(q.poststatus);
+            if (isDone(q.poststatus)) finished += count;
+            else {
+                if (getStatus(q.uploadstatus) === 'รอเริ่ม' || getStatus(q.uploadstatus) === 'กำลังทำ') waitUpload += count;
+                if ((getStatus(q.extractstatus) === 'รอเริ่ม' || getStatus(q.extractstatus) === 'กำลังทำ') && getStatus(q.extractstatus) !== 'Skipped') waitExtract += count;
+                if (getStatus(q.translatestatus) === 'รอเริ่ม' || getStatus(q.translatestatus) === 'กำลังทำ') waitTranslate += count;
+                if (getStatus(q.typesetstatus) === 'รอเริ่ม' || getStatus(q.typesetstatus) === 'กำลังทำ') waitTypeset += count;
+                if (getStatus(q.publishstatus) === 'รอเริ่ม' || getStatus(q.publishstatus) === 'กำลังทำ') waitPublish += count;
+                if ((postSt === 'รอเริ่ม' || postSt === 'กำลังทำ') && (isDone(q.publishstatus) || postSt === 'กำลังทำ')) waitPost += count;
+            }
+        });
+
+        // Update DOM
+        setTextIfExist('qStatFinished', finished);
+        setTextIfExist('qStatUpload', waitUpload);
+        setTextIfExist('qStatExtract', waitExtract);
+        setTextIfExist('qStatTranslate', waitTranslate);
+        setTextIfExist('qStatTypeset', waitTypeset);
+        setTextIfExist('qStatPublish', waitPublish);
+        setTextIfExist('qStatPost', waitPost);
+    }
+
+    function setTextIfExist(id, text) {
+        const elements = document.querySelectorAll(`[id = "${id}"]`);
+        elements.forEach(el => el.innerText = text);
+    }
+
+    function parseQueueDate(dateStr) {
+        if (!dateStr) return null;
+        if (dateStr instanceof Date) return isNaN(dateStr.getTime()) ? null : dateStr;
+        // รูปแบบไทย วัน/เดือน/ปี (อาจมีเวลาต่อท้าย) — ต้อง parse เองก่อน
+        // ไม่งั้น new Date() จะอ่านเป็น เดือน/วัน/ปี แบบอเมริกัน ทำให้เดือนผิด
+        if (typeof dateStr === 'string' && dateStr.includes('/')) {
+            const parts = dateStr.trim().split(' ')[0].split('/');
+            if (parts.length === 3) {
+                let yr = +parts[2];
+                if (yr > 2400) yr -= 543;
+                const d = new Date(yr, +parts[1] - 1, +parts[0]);
+                return isNaN(d.getTime()) ? null : d;
+            }
+        }
+        // ISO string หรือรูปแบบมาตรฐานอื่น ๆ
+        const d = new Date(dateStr);
+        return isNaN(d.getTime()) ? null : d;
+    }
+
+    function filterQueue() {
+        // Search Input
+        const searchInput = document.getElementById('searchInput');
+        const rawSearch = searchInput ? searchInput.value.toLowerCase().trim() : '';
+        const searchVal = rawSearch.replace(/\.\.\.+$/, '').replace(/…+$/, '').trim();
+
+        const completionVal = document.getElementById('completionFilter').value;
+        const stepVal = document.getElementById('stepFilter').value;
+        const assigneeVal = document.getElementById('assigneeFilter').value;
+        const urgentEl = document.getElementById('urgentFilter');
+        const urgentVal = urgentEl ? urgentEl.value : 'all';
+        const monthVal = document.getElementById('monthFilter').value;
+        const yearVal = document.getElementById('yearFilter').value;
+
+        let filtered = queueList;
+
+        // Filter by Month/Year
+        if (monthVal !== 'all' || yearVal !== 'all') {
+            filtered = filtered.filter(q => {
+                const d = parseQueueDate(q.createdat);
+                if (!d) return false;
+                const mMatch = monthVal === 'all' || (d.getMonth() + 1).toString() === monthVal;
+                const yMatch = yearVal === 'all' || d.getFullYear().toString() === yearVal;
+                return mMatch && yMatch;
+            });
+        }
+
+        // Filter by Search Text (Realtime)
+        if (searchVal) {
+            filtered = filtered.filter(q => {
+                const manga = mangaList.find(m => m.mangaid != null && q.mangaid != null && String(m.mangaid) === String(q.mangaid));
+                const mangaName = manga ? manga.manganame.toLowerCase() : '';
+                // You can also search by queueid or note if desired
+                return mangaName.includes(searchVal);
+            });
+        }
+
+        // Filter by Completion Status
+        if (completionVal !== 'all') {
+            filtered = filtered.filter(q => {
+                const isFinished = q.poststatus === 'เสร็จแล้ว';
+                if (completionVal === 'complete') return isFinished;
+                if (completionVal === 'incomplete') return !isFinished;
+                return true;
+            });
+        }
+
+        // Filter by Step Status
+        if (stepVal !== 'all') {
+            filtered = filtered.filter(q => {
+                const statusField = stepVal + 'status';
+                const rawStatus = q[statusField];
+                // Treat missing/empty/whitespace status as 'รอเริ่ม' (consistent with UI badge default)
+                const status = (rawStatus === undefined || rawStatus === null || String(rawStatus).trim() === '') ? 'รอเริ่ม' : String(rawStatus).trim();
+
+                // Helper to check if a step is "Done" (finished or skipped)
+                const isDone = (s) => {
+                    const str = (s || '').toString().trim();
+                    return str === 'เสร็จแล้ว' || str === 'Skipped' || str === 'ข้าม' || str.toLowerCase() === 'done';
+                };
+
+                // Check if status is 'Waiting' or 'In Progress'
+                const isPending = (status === 'รอเริ่ม' || status === 'กำลังทำ');
+                if (!isPending) return false;
+
+                // SPECIAL CONDITIONS:
+                // 1. If filtering for "Post" (โพสต์):
+                //    Previous step "Publish" must be Finished/Skipped, OR post is already 'กำลังทำ'
+                if (stepVal === 'post' && !isDone(q.publishstatus) && status !== 'กำลังทำ') return false;
+
+                // 2. If filtering for "Publish", "Typeset" (ลงคำ) must be Finished/Skipped
+                if (stepVal === 'publish' && !isDone(q.typesetstatus)) return false;
+
+                // 3. If filtering for "Typeset" (ลงคำ), "Translate" (แปล) must be Finished/Skipped
+                if (stepVal === 'typeset' && !isDone(q.translatestatus)) return false;
+
+                return true;
+            });
+        }
+
+        // Filter by Assignee
+        if (assigneeVal !== 'all') {
+            filtered = filtered.filter(q => {
+                // Check if this person is assigned to ANY role in this item
+                return q.uploadername === assigneeVal ||
+                    q.extractorname === assigneeVal ||
+                    q.translatorname === assigneeVal ||
+                    q.typesettername === assigneeVal ||
+                    q.publishername === assigneeVal ||
+                    q.postername === assigneeVal;
+            });
+        }
+
+        // Filter by Urgency (งานด่วน / ไม่ด่วน)
+        if (urgentVal !== 'all') {
+            filtered = filtered.filter(q => {
+                const manga = mangaList.find(m => m.mangaid != null && q.mangaid != null && String(m.mangaid) === String(q.mangaid));
+                const urgent = isUrgentManga(manga);
+                return urgentVal === 'urgent' ? urgent : !urgent;
+            });
+        }
+
+        currentFilteredQueue = filtered;
+
+        // Auto-sync step in bulk action bar when stepFilter is chosen
+        if (stepVal !== 'all') {
+            const bulkStepEl = document.getElementById('bulkStepSelect');
+            if (bulkStepEl) bulkStepEl.value = stepVal;
+        }
+
+        renderQueueTable(filtered);
+        if (typeof updateBulkActionBar === 'function') {
+            updateBulkActionBar();
+        }
+    }
+
+    function loadTeamData() {
+        google.script.run
+            .withSuccessHandler(data => {
+                teamList = Array.isArray(data) ? data : [];
+                renderTeamTable(teamList);
+                populateTeamDropdowns(teamList);
+                populateAssigneeFilter(teamList);
+            })
+            .withFailureHandler(onError)
+            .getTeamMembers();
+    }
+
+    function populateAssigneeFilter(team) {
+        const select = document.getElementById('assigneeFilter');
+        if (!select) return;
+
+        // Remove existing options except the first one
+        while (select.options.length > 1) {
+            select.remove(1);
+        }
+
+        team.forEach(m => {
+            if (m.status === 'Active') {
+                const opt = document.createElement('option');
+                opt.value = m.name;
+                opt.textContent = m.name;
+                select.appendChild(opt);
+            }
+        });
+
+        // Initialize/Update SlimSelect
+        if (typeof SlimSelect !== 'undefined') {
+            if (!ssAssigneeFilter) {
+                ssAssigneeFilter = new SlimSelect({
+                    select: '#assigneeFilter',
+                    settings: {
+                        placeholderText: 'ทีมงาน: ทั้งหมด',
+                        searchPlaceholderText: 'ค้นหาทีมงาน...',
+                    }
+                });
+            } else {
+                const activeTeam = team.filter(m => m.status === 'Active').map(m => ({ text: m.name, value: m.name }));
+                ssAssigneeFilter.setData([{ text: 'ทีมงาน: ทั้งหมด', value: 'all' }, ...activeTeam]);
+            }
+        }
+    }
+
+    function initQueueFilters() {
+        const monthSelect = document.getElementById('monthFilter');
+        const yearSelect = document.getElementById('yearFilter');
+        if (!monthSelect || !yearSelect) return;
+
+        const thaiMonths = [
+            "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
+            "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"
+        ];
+
+        // Populate Months
+        monthSelect.innerHTML = '<option value="all">เดือน: ทั้งหมด</option>';
+        thaiMonths.forEach((m, i) => {
+            const opt = document.createElement('option');
+            opt.value = (i + 1).toString();
+            opt.textContent = m;
+            monthSelect.appendChild(opt);
+        });
+
+        // Populate Years (Current and back 5 years)
+        const now = new Date();
+        const currentYear = now.getFullYear();
+        yearSelect.innerHTML = '<option value="all">ปี: ทั้งหมด</option>';
+        for (let i = 0; i < 6; i++) {
+            const y = currentYear - i;
+            const opt = document.createElement('option');
+            opt.value = y.toString();
+            opt.textContent = (y + 543).toString(); // Display in BE
+            yearSelect.appendChild(opt);
+        }
+
+        // Set default to current month and year
+        monthSelect.value = (now.getMonth() + 1).toString();
+        yearSelect.value = currentYear.toString();
+    }
+
+    function populateMangaDropdown(data) {
+        const select = document.getElementById('queueMangaId');
+        if (!select) return;
+        select.innerHTML = '<option value="">-- เลือกมังงะ --</option>';
+        data.forEach(m => {
+            const opt = document.createElement('option');
+            opt.value = m.mangaid;
+            opt.textContent = m.manganame;
+            select.appendChild(opt);
+        });
+
+        // Initialize/Update SlimSelect
+        if (typeof SlimSelect !== 'undefined') {
+            if (!ssQueueManga) {
+                ssQueueManga = new SlimSelect({
+                    select: '#queueMangaId',
+                    settings: {
+                        placeholderText: '-- เลือกมังงะ --',
+                        searchPlaceholderText: 'ค้นหามังงะ...',
+                    },
+                    events: {
+                        afterChange: (val) => {
+                            if (val && val[0]) {
+                                const mangaId = val[0].value;
+                                const manga = mangaList.find(m => m.mangaid != null && String(m.mangaid) === String(mangaId));
+                                if (manga && manga.lockedtranslator) {
+                                    const transSelect = document.getElementById('translatorName');
+                                    if (transSelect) {
+                                        transSelect.value = manga.lockedtranslator;
+                                        if (ssTeam['translatorName']) {
+                                            ssTeam['translatorName'].setSelected(manga.lockedtranslator);
+                                        }
+                                    }
+                                }
+                                // Also update cost
+                                if (manga && document.getElementById('queueCostPerChapter')) {
+                                    document.getElementById('queueCostPerChapter').value = manga.costperchapter || 0;
+                                }
+                            }
+                        }
+                    }
+                });
+            } else {
+                ssQueueManga.setData(data.map(m => ({ text: m.manganame, value: String(m.mangaid ?? '') })));
+                ssQueueManga.setSelected('');
+            }
+        }
+    }
+
+    function populateTeamDropdowns(team) {
+        const fields = [
+            'uploaderName', 'extractorName', 'translatorName', 'typesetterName', 'publisherName', 'posterName',
+            'updateUploaderName', 'updateExtractorName', 'updateTranslatorName', 'updateTypesetterName', 'updatePublisherName', 'updatePosterName'
+        ];
+        fields.forEach(fieldId => {
+            const select = document.getElementById(fieldId);
+            if (!select) return;
+            const currentVal = select.value;
+            select.innerHTML = '<option value="">-- เลือกผู้รับผิดชอบ --</option>';
+            team.forEach(m => {
+                const opt = document.createElement('option');
+                opt.value = m.name;
+                opt.textContent = m.name + (m.role ? ` (${m.role})` : '');
+                select.appendChild(opt);
+            });
+            if (currentVal) select.value = currentVal;
+
+            // Initialize/Update SlimSelect
+            if (typeof SlimSelect !== 'undefined') {
+                if (!ssTeam[fieldId]) {
+                    ssTeam[fieldId] = new SlimSelect({
+                        select: '#' + fieldId,
+                        settings: {
+                            placeholderText: '-- เลือกผู้รับผิดชอบ --',
+                            searchPlaceholderText: 'ค้นหาทีมงาน...',
+                        }
+                    });
+                } else {
+                    const data = team.map(m => ({ text: m.name + (m.role ? ` (${m.role})` : ''), value: m.name }));
+                    ssTeam[fieldId].setData([{ text: '-- เลือกผู้รับผิดชอบ --', value: '' }, ...data]);
+                    if (currentVal) ssTeam[fieldId].setSelected(currentVal);
+                }
+            }
+        });
+
+        if (typeof populateBulkAssignee === 'function') {
+            populateBulkAssignee(team);
+        }
+    }
+
+    function onError(error) {
+        showLoader(false);
+        console.error('Data load error:', error);
+        Swal.fire('Error', error.message || 'เกิดข้อผิดพลาดในการโหลดข้อมูล', 'error');
+    }
+
+    function showLoader(show) {
+        const loader = document.getElementById('loader');
+        if (loader) loader.style.display = show ? 'flex' : 'none';
+    }
+
+    // Render Dashboard (Cards)
+    function renderDashboard() {
+        if (!mangaList || mangaList.length === 0) return;
+
+        updateGlobalStats();
+
+        // 2. Render Monthly Overview (Left Content)
+        renderMonthlySchedule();
+
+        // 3. Render Pending Works (Right Sidebar)
+        const activeQueueItems = queueList.filter(q => q.poststatus !== 'เสร็จแล้ว');
+        renderPendingWorks(activeQueueItems);
+    }
+
+    function updateGlobalStats() {
+        if (!mangaList || mangaList.length === 0) return;
+
+        // 1. Update Stats Cards
+        const totalManga = mangaList.length;
+        const activeQueueItems = queueList.filter(q => q.poststatus !== 'เสร็จแล้ว');
+        const pendingCount = activeQueueItems.length;
+
+        // Finished this week (Last 7 days)
+        const sevenDaysAgo = new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+        let finishedThisWeekCount = 0;
+        queueList.forEach(q => {
+            if (q.poststatus === 'เสร็จแล้ว' && new Date(q.createdat) >= sevenDaysAgo) {
+                finishedThisWeekCount += getChapterCount(q.chapter);
+            }
+        });
+
+        // Released Today
+        const todayDay = getThaiDayName(new Date());
+        const releasedToday = mangaList.filter(m =>
+            m.status === 'Ongoing' &&
+            m.releaseday && m.releaseday.split(',').map(d => d.trim()).includes(todayDay)
+        ).length;
+
+        setTextIfExist('totalSeries', totalManga);
+        setTextIfExist('pendingSeries', pendingCount);
+        setTextIfExist('finishedThisWeek', finishedThisWeekCount);
+        setTextIfExist('releasedToday', releasedToday);
+    }
+
+    function getChapterCount(chapterStr, treatSingleAsCount = false) {
+        if (!chapterStr) return 0;
+        const s = chapterStr.toString().trim();
+        if (s.includes('-')) {
+            const parts = s.split('-').map(p => parseFloat(p.trim()));
+            if (parts.length >= 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+                const count = Math.abs(parts[1] - parts[0]) + 1;
+                return Math.max(0, count);
+            }
+        }
+        const val = parseFloat(s);
+        if (isNaN(val)) return 0;
+        return treatSingleAsCount ? val : 1;
+    }
+
+    function getQueueCurrentStep(q) {
+        if (!q) return 'finished';
+        const isDone = (s) => {
+            const str = (s || '').toString().trim();
+            return str === 'เสร็จแล้ว' || str === 'Skipped' || str === 'ข้าม' || str.toLowerCase() === 'done';
+        };
+        const isDoing = (s) => String(s || '').trim() === 'กำลังทำ';
+
+        // Check if explicitly in progress
+        if (isDoing(q.typesetstatus)) return 'typeset';
+        if (isDoing(q.translatestatus)) return 'translate';
+        if (isDoing(q.extractstatus)) return 'extract';
+        if (isDoing(q.publishstatus)) return 'publish';
+        if (isDoing(q.poststatus)) return 'post';
+        if (isDoing(q.uploadstatus)) return 'upload';
+
+        // Otherwise sequential pipeline
+        if (!isDone(q.uploadstatus)) return 'upload';
+        if (!isDone(q.extractstatus)) return 'extract';
+        if (!isDone(q.translatestatus)) return 'translate';
+        if (!isDone(q.typesetstatus)) return 'typeset';
+        if (!isDone(q.publishstatus)) return 'publish';
+        if (!isDone(q.poststatus)) return 'post';
+        return 'finished';
+    }
+
+    function renderMonthlySchedule() {
+        // Renamed from renderWeeklySchedule but keeping call site consistent in future update
+        // (Note: You must also update the call in renderDashboard to point here)
+
+        const calendarContainer = document.getElementById('monthlySchedule');
+        if (!calendarContainer) return;
+        calendarContainer.innerHTML = '';
+
+        // 1. Get Current Month & Year
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = now.getMonth(); // 0-11
+
+        // Update Label
+        const thaiMonths = [
+            "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
+            "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"
+        ];
+        const label = document.getElementById('calendarMonthLabel');
+        if (label) label.innerText = `${thaiMonths[month]} ${year + 543} `;
+
+        // 2. Render Headers (Sun-Sat or Mon-Sun)
+        // Let's use Sun-Sat for standard calendar, but Thai usually likes Mon-Sun? Let's stick to Mon-Sun to match work week
+        const dayHeaders = ['จ.', 'อ.', 'พ.', 'พฤ.', 'ศ.', 'ส.', 'อา.'];
+        dayHeaders.forEach(d => {
+            const h = document.createElement('div');
+            h.className = 'calendar-header';
+            h.innerText = d;
+            calendarContainer.appendChild(h);
+        });
+
+        // 3. Calculate Calendar Days
+        // First day of month
+        const firstDay = new Date(year, month, 1);
+        const lastDay = new Date(year, month + 1, 0);
+
+        // Adjust for Mon start (Day 0 is Sunday)
+        let firstDayIndex = firstDay.getDay() - 1;
+        if (firstDayIndex < 0) firstDayIndex = 6; // Sunday becomes 6
+
+        const daysInMonth = lastDay.getDate();
+
+        // Previous Month Padding
+        for (let i = 0; i < firstDayIndex; i++) {
+            const pad = document.createElement('div');
+            pad.className = 'calendar-day other-month';
+            calendarContainer.appendChild(pad);
+        }
+
+        // Current Month Days
+        for (let day = 1; day <= daysInMonth; day++) {
+            const date = new Date(year, month, day);
+            const dayOfWeek = getThaiDayName(date); // Your existing function returns 'วันจันทร์' etc.
+            const dateStr = date.toLocaleDateString('th-TH'); // d/m/yyyy format matching typically
+
+            const cell = document.createElement('div');
+            cell.className = 'calendar-day';
+            const isToday = day === now.getDate() && month === now.getMonth() && year === now.getFullYear();
+            if (isToday) cell.classList.add('today');
+
+            // Day Number
+            cell.innerHTML = `<div class="day-number">${day} ${isToday ? '<span style="color:var(--primary-color)">วันนี้</span>' : ''}</div>`;
+
+            // A. Find Scheduled Manga (from Metadata)
+            // Show ONLY if releaseday matches. 
+            // NOTE: If today is past, maybe don't show "Scheduled" if no Queue was created? 
+            // Or just show everything to show the Plan. Let's show everything but style differently.
+
+            const scheduledManga = mangaList.filter(m =>
+                m.status === 'Ongoing' &&
+                m.releaseday && m.releaseday.split(',').map(d => d.trim()).includes(dayOfWeek)
+            );
+
+            // B. Find Actual Queue Items (Manual + Auto) created on this day
+            // We match by comparing Date parts of createdat
+            // Show ONLY tasks in steps: รอดึงคำ (extract), รอแปล (translate), ลงคำ/รอลงคำ (typeset)
+            const allowedMonthlySteps = ['extract', 'translate', 'typeset'];
+            const queueItemsOnDay = queueList.filter(q => {
+                const qDate = parseQueueDate(q.createdat) || new Date(q.createdat);
+                if (!qDate || isNaN(qDate.getTime())) return false;
+                const isSameDay = qDate.getDate() === day && qDate.getMonth() === month && qDate.getFullYear() === year;
+                if (!isSameDay) return false;
+
+                const stepKey = getQueueCurrentStep(q);
+                return allowedMonthlySteps.includes(stepKey);
+            });
+
+            // Priority sorting according to requirement:
+            // 1. งาน รอแปล (ด่วน) -> อันดับ 1 บนสุด (สีแดง)
+            // 2. งาน รอแปล (ปกติ) -> อันดับ 2 (สีเหลือง)
+            // 3. งานลงคำ (กำลังทำ) -> อันดับ 3 (สีเขียว)
+            // 4. งานรอลงคำ (รอเริ่ม) -> อันดับ 4 (สีส้ม)
+            // 5. อื่นๆ (เช่น รอดึงคำ)
+            function getMonthlyTaskPriority(q) {
+                const manga = mangaList.find(m => m.mangaid != null && q.mangaid != null && String(m.mangaid) === String(q.mangaid));
+                const isUrgent = isUrgentManga(manga);
+                const stepKey = getQueueCurrentStep(q);
+
+                if (stepKey === 'translate') {
+                    return isUrgent ? 1 : 2; // 1: รอแปล (ด่วน), 2: รอแปล (ปกติ)
+                }
+                if (stepKey === 'typeset') {
+                    const isDoing = String(q.typesetstatus || '').trim() === 'กำลังทำ';
+                    return isDoing ? 3 : 4; // 3: งานลงคำ, 4: งานรอลงคำ
+                }
+                if (stepKey === 'extract') return 5;
+                return 6;
+            }
+
+            queueItemsOnDay.sort((a, b) => {
+                const pA = getMonthlyTaskPriority(a);
+                const pB = getMonthlyTaskPriority(b);
+                if (pA !== pB) return pA - pB;
+                const mangaA = mangaList.find(m => m.mangaid != null && a.mangaid != null && String(m.mangaid) === String(a.mangaid));
+                const mangaB = mangaList.find(m => m.mangaid != null && b.mangaid != null && String(m.mangaid) === String(b.mangaid));
+                const urgA = isUrgentManga(mangaA) ? 1 : 0;
+                const urgB = isUrgentManga(mangaB) ? 1 : 0;
+                if (urgA !== urgB) return urgB - urgA;
+                return (a.queueid || 0) - (b.queueid || 0);
+            });
+
+            // COMBINE
+            const renderedMangaIds = new Set();
+            const MAX_DISPLAY = 5;
+
+            // 1. Queue Items (Priority) - Limit to Top 5
+            queueItemsOnDay.slice(0, MAX_DISPLAY).forEach(q => {
+                const manga = mangaList.find(m => m.mangaid != null && q.mangaid != null && String(m.mangaid) === String(q.mangaid));
+                const fullName = manga ? manga.manganame : 'Unknown';
+                let displayName = fullName;
+                const isUrgent = isUrgentManga(manga);
+                if (displayName.length > 22) displayName = displayName.substring(0, 22) + '...';
+
+                // ตัด ... หรือ … ท้ายชื่อออกเมื่อคลิกไปค้นหาในตารางคิวงาน เช่น "ยุควิทยายุทธ์เดือด: เซ..." -> "ยุควิทยายุทธ์เดือด: เซ"
+                const searchKeyword = displayName.replace(/\.\.\.+$/, '').replace(/…+$/, '').trim();
+
+                const stepKey = getQueueCurrentStep(q);
+                let itemClass = 'calendar-item';
+                let stepLabel = '';
+
+                if (stepKey === 'translate') {
+                    if (isUrgent) {
+                        itemClass += ' item-translate-urgent';
+                        stepLabel = 'รอแปล (ด่วน)';
+                    } else {
+                        itemClass += ' item-translate';
+                        stepLabel = 'รอแปล (ปกติ)';
+                    }
+                } else if (stepKey === 'typeset') {
+                    const isDoing = String(q.typesetstatus || '').trim() === 'กำลังทำ';
+                    if (isDoing) {
+                        itemClass += ' item-typeset-doing';
+                        stepLabel = 'งานลงคำ (กำลังทำ)';
+                    } else {
+                        itemClass += ' item-typeset-waiting';
+                        stepLabel = 'งานรอลงคำ';
+                    }
+                } else if (stepKey === 'extract') {
+                    itemClass += ' item-extract';
+                    stepLabel = 'รอดึงคำ';
+                } else {
+                    itemClass += ' in-queue';
+                    stepLabel = stepKey;
+                }
+
+                const div = document.createElement('div');
+                div.className = itemClass;
+                div.innerText = `${isUrgent ? '🔥 ' : ''}${displayName} #${q.chapter}`;
+                div.title = `${fullName} ตอนที่ ${q.chapter} | ${stepLabel}${isUrgent ? ' [งานด่วน]' : ''}`;
+                div.onclick = () => { switchView('queue'); searchQueue(searchKeyword); };
+                cell.appendChild(div);
+
+                if (q.mangaid != null) renderedMangaIds.add(String(q.mangaid));
+            });
+
+            if (queueItemsOnDay.length > MAX_DISPLAY) {
+                const moreCount = queueItemsOnDay.length - MAX_DISPLAY;
+                const moreDiv = document.createElement('div');
+                moreDiv.style.cssText = 'font-size: 0.6rem; color: #94a3b8; text-align: center; margin-top: 2px; cursor: pointer;';
+                moreDiv.innerText = `+อีก ${moreCount} รายการ`;
+                moreDiv.onclick = () => { switchView('queue'); };
+                cell.appendChild(moreDiv);
+            }
+
+            // 2. Scheduled (Ghost) -- DISABLED AS PER REQUEST
+            /*
+            scheduledManga.forEach(m => {
+                if (!renderedMangaIds.has(m.mangaid.toString())) {
+                    const div = document.createElement('div');
+                    div.className = 'calendar-item scheduled';
+                    div.innerText = `${m.manganame} `;
+                    div.title = `กำหนดปล่อย: ${m.releaseday} `;
+                    // Clicking scheduled item could trigger "Manual Add" or filter? Just filter for now.
+                    div.onclick = () => { switchView('queue'); searchQueue(m.manganame); };
+                    cell.appendChild(div);
+                }
+            });
+            */
+
+            calendarContainer.appendChild(cell);
+        }
+    }
+
+    function renderPendingWorks(activeQueue) {
+        const list = document.getElementById('pendingWorksList');
+        if (!list) return;
+        list.innerHTML = '';
+
+        if (activeQueue.length === 0) {
+            list.innerHTML = '<p style="text-align: center; color: #94a3b8; padding: 1rem;">ไม่มีงานค้าง ยอดเยี่ยมมาก! 🎉</p>';
+            return;
+        }
+
+        activeQueue.forEach(q => {
+            const manga = mangaList.find(m => m.mangaid != null && q.mangaid != null && String(m.mangaid) === String(q.mangaid));
+            const mangaName = manga ? manga.manganame : 'มังงะไม่ทราบชื่อ';
+
+            const stepKey = getQueueCurrentStep(q);
+            const stepThaiNames = {
+                'upload': 'อัป Raw',
+                'extract': 'ดึงคำ',
+                'translate': 'แปล',
+                'typeset': 'ลงคำ',
+                'publish': 'ตรวจ/ลงเว็บ',
+                'post': 'โพสต์',
+                'finished': 'เสร็จแล้ว'
+            };
+            const currentStep = stepThaiNames[stepKey] || "กำลังรอเริ่ม";
+
+            const div = document.createElement('div');
+            div.className = 'pending-task';
+            div.onclick = () => {
+                openUpdateQueueModal(q, mangaName);
+            };
+
+            div.innerHTML = `
+            <div class="task-manga">${mangaName} - ตอนที่ ${q.chapter}</div>
+                <div class="task-step-info">
+                    <span class="step-label">ขั้นตอนนี้: <b>${currentStep}</b></span>
+                    <span style="font-size: 0.7rem; color: #94a3b8;">${q.createdat ? timeSince(new Date(q.createdat)) : ''}</span>
+                </div>
+        `;
+            list.appendChild(div);
+        });
+    }
+
+    function openUpdateQueueModal(queueItem, mangaName) {
+        // Populate Fields
+        document.getElementById('updateQueueId').value = queueItem.queueid;
+        document.getElementById('updateMangaId').value = queueItem.mangaid;
+        document.getElementById('updateMangaName').value = mangaName;
+        document.getElementById('updateQueueChapter').value = queueItem.chapter;
+
+        // Populate Cost from mangaList
+        const manga = mangaList.find(m => m.mangaid != null && queueItem.mangaid != null && String(m.mangaid) === String(queueItem.mangaid));
+        if (manga && document.getElementById('updateQueueCostPerChapter')) {
+            document.getElementById('updateQueueCostPerChapter').value = manga.costperchapter || 0;
+        }
+
+        // Statuses
+        const setSelect = (id, val) => {
+            const el = document.getElementById(id);
+            if (el) el.value = val || 'รอเริ่ม';
+        };
+        setSelect('updateUploadStatus', queueItem.uploadstatus);
+        setSelect('updateExtractStatus', queueItem.extractstatus);
+        setSelect('updateTranslateStatus', queueItem.translatestatus);
+        setSelect('updateTypesetStatus', queueItem.typesetstatus);
+        setSelect('updatePublishStatus', queueItem.publishstatus);
+        setSelect('updatePostStatus', queueItem.poststatus);
+
+        // Populate Dropdowns (Ensure they are fresh)
+        const populate = (id, selected) => {
+            const select = document.getElementById(id);
+            if (!select) return;
+            select.innerHTML = '<option value="">-- เลือกผู้รับผิดชอบ --</option>';
+            teamList.forEach(member => {
+                const option = document.createElement('option');
+                option.value = member.name;
+                option.textContent = member.name;
+                if (member.name === selected) option.selected = true;
+                select.appendChild(option);
+            });
+
+            // Update SlimSelect
+            if (typeof SlimSelect !== 'undefined' && ssTeam[id]) {
+                const data = teamList.map(m => ({ text: m.name + (m.role ? ` (${m.role})` : ''), value: m.name }));
+                ssTeam[id].setData([{ text: '-- เลือกผู้รับผิดชอบ --', value: '' }, ...data]);
+                if (selected) ssTeam[id].setSelected(selected);
+                else ssTeam[id].setSelected('');
+            }
+        };
+
+        populate('updateUploaderName', queueItem.uploadername);
+        populate('updateExtractorName', queueItem.extractorname);
+        populate('updateTranslatorName', queueItem.translatorname);
+        populate('updateTypesetterName', queueItem.typesettername);
+        populate('updatePublisherName', queueItem.publishername);
+        populate('updatePosterName', queueItem.postername);
+
+        // Links & Note
+        document.getElementById('updateWorkLink').value = queueItem.worklink || '';
+        document.getElementById('updateQueueNote').value = queueItem.note || '';
+
+        // Show Modal
+        document.getElementById('updateQueueModal').style.display = 'flex';
+    }
+
+    function handleUpdateQueueSubmit(event) {
+        event.preventDefault();
+        const btn = event.target.querySelector('button[type="submit"]');
+        const originalText = btn.textContent;
+        btn.textContent = "กำลังบันทึก...";
+        btn.disabled = true;
+
+        const queueId = document.getElementById('updateQueueId').value;
+        const updateData = {
+            chapter: document.getElementById('updateQueueChapter').value,
+            uploadstatus: document.getElementById('updateUploadStatus').value,
+            extractstatus: document.getElementById('updateExtractStatus').value,
+            translatestatus: document.getElementById('updateTranslateStatus').value,
+            typesetstatus: document.getElementById('updateTypesetStatus').value,
+            publishstatus: document.getElementById('updatePublishStatus').value,
+
+            uploadername: document.getElementById('updateUploaderName').value,
+            extractorname: document.getElementById('updateExtractorName').value,
+            translatorname: document.getElementById('updateTranslatorName').value,
+            typesettername: document.getElementById('updateTypesetterName').value,
+            publishername: document.getElementById('updatePublisherName').value,
+            poststatus: document.getElementById('updatePostStatus').value,
+            postername: document.getElementById('updatePosterName').value,
+
+            worklink: document.getElementById('updateWorkLink').value,
+            note: document.getElementById('updateQueueNote').value,
+
+        };
+
+        // Sync Cost back to Manga Settings if changed
+        const newCost = document.getElementById('updateQueueCostPerChapter')?.value;
+        const mangaId = document.getElementById('updateMangaId').value;
+        const currentManga = mangaList.find(m => m.mangaid != null && String(m.mangaid) === String(mangaId));
+        if (newCost !== undefined && currentManga && parseFloat(newCost) !== parseFloat(currentManga.costperchapter || 0)) {
+            google.script.run.updateManga(mangaId, { ...currentManga, costperchapter: newCost });
+        }
+
+        // Optional: Capture specific link inputs if used
+        const rawLink = document.getElementById('updateRawLink')?.value;
+        const extractLink = document.getElementById('updateExtractLink')?.value;
+        if (rawLink) updateData.worklink = (updateData.worklink + '\n[อัป Raw] ' + rawLink).trim();
+        if (extractLink) updateData.worklink = (updateData.worklink + '\n[ดึงคำ] ' + extractLink).trim();
+
+        google.script.run
+            .withSuccessHandler(response => {
+                btn.textContent = originalText;
+                btn.disabled = false;
+                if (response.success) {
+                    document.getElementById('updateQueueModal').style.display = 'none';
+                    Swal.fire({ icon: 'success', title: 'บันทึกเรียบร้อย', timer: 1500, showConfirmButton: false });
+
+                    // Refresh Data specific flow? or global? 
+                    // Global refresh is safest to update Dashboard and Queue views
+                    loadQueueData();
+                } else {
+                    Swal.fire({ icon: 'error', title: 'เกิดข้อผิดพลาด', text: response.error });
+                }
+            })
+            .withFailureHandler(err => {
+                btn.textContent = originalText;
+                btn.disabled = false;
+                Swal.fire({ icon: 'error', title: 'เกิดข้อผิดพลาด', text: err.toString() });
+            })
+            .updateFullQueueItem(queueId, updateData);
+    }
+
+
+    function getThaiDayName(date) {
+        const days = ['วันอาทิตย์', 'วันจันทร์', 'วันอังคาร', 'วันพุธ', 'วันพฤหัสบดี', 'วันศุกร์', 'วันเสาร์'];
+        return days[date.getDay()];
+    }
+
+    function searchQueue(term) {
+        if (!term) return;
+        // ตัด ... หรือ … ที่อยู่ท้ายชื่อออก เช่น "ยุควิทยายุทธ์เดือด: เซ..." -> "ยุควิทยายุทธ์เดือด: เซ"
+        const cleanTerm = term.toString().replace(/\.\.\.+$/, '').replace(/…+$/, '').trim();
+        const searchInput = document.getElementById('searchInput') || document.querySelector('input[placeholder*="ค้นหา"]');
+        if (searchInput) {
+            searchInput.value = cleanTerm;
+            // Trigger input event to filter the table
+            const event = new Event('input', { bubbles: true });
+            searchInput.dispatchEvent(event);
+        }
+    }
+
+    // Render Settings Table
+    function renderMangaTable(data) {
+        const tbody = document.getElementById('mangaTableBody');
+        if (!tbody) return;
+
+        tbody.innerHTML = '';
+        if (!data || data.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 2rem; color: #666;">ไม่มีข้อมูลแสดงผล</td></tr>';
+            return;
+        }
+
+        data.forEach(manga => {
+            const tr = document.createElement('tr');
+            const dateStr = manga.lastupdated ? timeSince(new Date(manga.lastupdated)) : '-';
+            const manganame = manga.manganame || 'Untitled';
+            const originalname = manga.originalname || '';
+            const originalurl = manga.originalurl || '';
+            const status = manga.status || 'Unknown';
+            const lastchapter = manga.lastchapter || '0';
+            const mangaid = manga.mangaid || '';
+
+            const originalDisplay = originalurl
+                ? `<a href="${originalurl}" target="_blank" style="color: #4f46e5; text-decoration: none;">${originalname || 'Link'} 🔗</a>`
+                : originalname || '-';
+
+            tr.innerHTML = `
+            <td style="padding: 1rem; border-bottom: 1px solid #eee;">
+                    <div style="font-weight: 500;">${manganame}</div>
+                    <div style="font-size: 0.85rem; color: #888;">${originalDisplay}</div>
+                </td>
+                <td style="padding: 1rem; border-bottom: 1px solid #eee; font-size: 0.85rem; color: #666;">
+                    ${manga.slug || '-'}
+                </td>
+                <td style="padding: 1rem; border-bottom: 1px solid #eee;">
+                    <span style="padding: 0.25rem 0.5rem; border-radius: 999px; font-size: 0.85rem; background: ${status === 'Ongoing' ? '#dcfce7' : '#fee2e2'};">
+                        ${status}
+                    </span>
+                </td>
+                <td style="padding: 1rem; border-bottom: 1px solid #eee;">Ch. ${lastchapter}</td>
+                <td style="padding: 1rem; border-bottom: 1px solid #eee; color: #666; font-size: 0.85rem;">
+                    ${dateStr}
+                    <div style="font-size: 0.75rem; color: #999;">${manga.lastupdated ? new Date(manga.lastupdated).toLocaleDateString() : ''}</div>
+                </td>
+                <td style="padding: 1rem; border-bottom: 1px solid #eee;">
+                    <button class="btn" style="padding: 0.25rem 0.5rem; font-size: 0.85rem; margin-right: 0.5rem;" onclick="editManga('${mangaid}')">✏️</button>
+                    <button class="btn" style="padding: 0.25rem 0.5rem; font-size: 0.85rem; background: #fee2e2; color: #dc2626;" onclick="deleteManga('${mangaid}')">🗑️</button>
+                </td>
+        `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    function timeSince(date) {
+        const seconds = Math.floor((new Date() - date) / 1000);
+        let interval = Math.floor(seconds / 31536000);
+
+        if (interval > 1) return interval + " ปีที่แล้ว";
+        interval = Math.floor(seconds / 2592000);
+        if (interval > 1) return interval + " เดือนที่แล้ว";
+        interval = Math.floor(seconds / 86400);
+        if (interval > 1) return interval + " วันที่แล้ว";
+        if (interval === 1) return "เมื่อวานนี้";
+        interval = Math.floor(seconds / 3600);
+        if (interval > 1) return interval + " ชั่วโมงที่แล้ว";
+        interval = Math.floor(seconds / 60);
+        if (interval > 1) return interval + " นาทีที่แล้ว";
+        return "เมื่อครู่";
+    }
+
+
+    let returnToQueue = false;
+
+    function openMangaModal() {
+        console.log('Attempting to open Manga Modal (New IDs)...');
+
+        const mangaModal = document.getElementById('mangaModalNew');
+        const queueModal = document.getElementById('queueModal');
+
+        // 1. Defensively hide Queue Modal if it's currently showing
+        if (queueModal) {
+            const currentDisplay = window.getComputedStyle(queueModal).display;
+            if (currentDisplay !== 'none') {
+                console.log('Hiding active queue modal first...');
+                returnToQueue = true;
+                queueModal.style.setProperty('display', 'none', 'important');
+            }
+        }
+
+        // 2. Clear fields BEFORE showing (fast path)
+        const form = document.getElementById('newMangaForm');
+        if (form) form.reset();
+
+        if (document.getElementById('newMangaId')) document.getElementById('newMangaId').value = '';
+        if (document.getElementById('newMangaSlug')) document.getElementById('newMangaSlug').value = '';
+        if (document.getElementById('newMangaModalTitle')) document.getElementById('newMangaModalTitle').innerText = 'เพิ่มมังงะใหม่';
+        if (document.getElementById('newNeedsExtract')) document.getElementById('newNeedsExtract').checked = true;
+        // if (document.getElementById('newReleaseDay')) document.getElementById('newReleaseDay').value = 'None';
+        document.querySelectorAll('.release-day-cb').forEach(cb => cb.checked = false);
+        if (document.getElementById('newCostPerChapter')) document.getElementById('newCostPerChapter').value = 0;
+        if (document.getElementById('newNotifyOnAdd')) document.getElementById('newNotifyOnAdd').checked = false;
+        if (document.getElementById('newIsUrgent')) document.getElementById('newIsUrgent').checked = false;
+
+        // 3. Use a slightly longer timeout for GAS environment stability
+        setTimeout(() => {
+            if (!mangaModal) {
+                console.error('CRITICAL: mangaModalNew NOT FOUND in DOM');
+                return;
+            }
+
+            // Show the Manga Modal with extreme priority
+            mangaModal.style.setProperty('display', 'flex', 'important');
+            mangaModal.style.setProperty('visibility', 'visible', 'important');
+            mangaModal.style.setProperty('opacity', '1', 'important');
+            mangaModal.style.setProperty('z-index', '20000', 'important');
+
+            const content = mangaModal.querySelector('.modal-content');
+            if (content) {
+                content.style.setProperty('display', 'block', 'important');
+                content.style.setProperty('visibility', 'visible', 'important');
+                content.style.setProperty('opacity', '1', 'important');
+            }
+
+            // Populate Locked Translator Dropdown (Move inside timeout to ensure visibility for SlimSelect calculation)
+            const lockedSelect = document.getElementById('newLockedTranslator');
+            if (lockedSelect) {
+                lockedSelect.innerHTML = '<option value="">-- ไม่มีการล็อคคนแปล --</option>';
+                teamList.filter(m => m.status === 'Active' && (m.role === 'Translator' || m.role === 'Multi-role')).forEach(m => {
+                    const opt = document.createElement('option');
+                    opt.value = m.name;
+                    opt.textContent = m.name;
+                    lockedSelect.appendChild(opt);
+                });
+
+                // Initialize/Update SlimSelect
+                if (typeof SlimSelect !== 'undefined') {
+                    if (!ssLockedTranslator) {
+                        ssLockedTranslator = new SlimSelect({
+                            select: '#newLockedTranslator',
+                            settings: {
+                                placeholderText: '-- ไม่มีการล็อคคนแปล --',
+                                searchPlaceholderText: 'ค้นหาคนแปล...',
+                                contentLocation: document.body // Crucial for modals with overflow
+                            }
+                        });
+                    } else {
+                        const data = teamList.filter(m => m.status === 'Active' && (m.role === 'Translator' || m.role === 'Multi-role'))
+                            .map(m => ({ text: m.name, value: m.name }));
+                        ssLockedTranslator.setData([{ text: '-- ไม่มีการล็อคคนแปล --', value: '' }, ...data]);
+                        ssLockedTranslator.setSelected('');
+                    }
+                }
+            }
+
+            console.log('Manga Modal forced to visible flex state with New IDs.');
+        }, 150);
+    }
+    function closeMangaModal() {
+        const modal = document.getElementById('mangaModalNew');
+        if (modal) modal.style.display = 'none';
+    }
+
+    // CRUD Operations
+    function handleMangaSubmit(e) {
+        e.preventDefault();
+
+        const id = document.getElementById('newMangaId').value;
+        const selectedDays = Array.from(document.querySelectorAll('.release-day-cb:checked')).map(cb => cb.value).join(', ');
+
+        const mangaData = {
+            manganame: document.getElementById('newMangaName').value,
+            originalname: document.getElementById('newOriginalName').value,
+            originalurl: document.getElementById('newOriginalUrl').value,
+            slug: document.getElementById('newMangaSlug').value,
+            status: document.getElementById('newMangaStatus').value,
+            lastchapter: document.getElementById('newLastChapter').value,
+            needsextract: document.getElementById('newNeedsExtract').checked,
+            releaseday: selectedDays || 'None',
+            costperchapter: document.getElementById('newCostPerChapter').value,
+            lockedtranslator: document.getElementById('newLockedTranslator').value,
+            notifyonadd: document.getElementById('newNotifyOnAdd').checked,
+            isurgent: document.getElementById('newIsUrgent').checked
+        };
+
+        const btn = e.target.querySelector('button[type="submit"]');
+        const originalText = btn.innerText;
+        btn.innerText = 'กำลังบันทึก...';
+        btn.disabled = true;
+        showLoader(true);
+
+        if (id) {
+            google.script.run
+                .withSuccessHandler(response => {
+                    handleResponse(response, btn, originalText);
+                })
+                .withFailureHandler(err => {
+                    showLoader(false);
+                    Swal.fire({
+                        icon: 'error',
+                        title: 'Error',
+                        text: err.message,
+                        confirmButtonColor: '#4f46e5'
+                    });
+                    btn.innerText = originalText;
+                    btn.disabled = false;
+                })
+                .updateManga(id, mangaData);
+        } else {
+            google.script.run
+                .withSuccessHandler(response => {
+                    handleResponse(response, btn, originalText);
+                })
+                .withFailureHandler(err => {
+                    showLoader(false);
+                    Swal.fire({
+                        icon: 'error',
+                        title: 'Error',
+                        text: err.message,
+                        confirmButtonColor: '#4f46e5'
+                    });
+                    btn.innerText = originalText;
+                    btn.disabled = false;
+                })
+                .addManga(mangaData);
+        }
+    }
+
+    function handleResponse(response, btn, originalText) {
+        btn.innerText = originalText;
+        btn.disabled = false;
+        showLoader(false);
+
+        if (response && response.error) {
+            Swal.fire({
+                icon: 'error',
+                title: 'Error',
+                text: response.error,
+                confirmButtonColor: '#4f46e5'
+            });
+        } else {
+            const isEdit = document.getElementById('newMangaId').value !== '';
+
+            // Extract updated list and potential new ID (for auto-select)
+            const updatedList = response.list || response;
+            const newMangaId = response.mangaId;
+
+            closeMangaModal();
+            showToast(isEdit ? 'อัปเดตข้อมูลเรียบร้อยแล้ว' : 'เพิ่มมังงะใหม่เรียบร้อยแล้ว');
+            onDataLoaded(updatedList);
+
+            if (returnToQueue && !isEdit) {
+                // Re-open queue modal if we came from there
+                setTimeout(() => {
+                    openQueueModal(true); // Keep state
+
+                    // Auto-select the newly added manga
+                    if (newMangaId) {
+                        const dropdown = document.getElementById('queueMangaId');
+                        if (dropdown) dropdown.value = newMangaId;
+                    }
+
+                    returnToQueue = false;
+                }, 350); // Increased slightly to ensure dropdown is populated
+            }
+        }
+    }
+
+    function editManga(id) {
+        if (!id) return;
+        const manga = mangaList.find(m => m.mangaid != null && id != null && String(m.mangaid) === String(id));
+        if (!manga) return;
+
+        openMangaModal();
+
+        setTimeout(() => {
+            if (document.getElementById('newMangaId')) document.getElementById('newMangaId').value = manga.mangaid || '';
+            if (document.getElementById('newMangaName')) document.getElementById('newMangaName').value = manga.manganame || '';
+            if (document.getElementById('newOriginalName')) document.getElementById('newOriginalName').value = manga.originalname || '';
+            if (document.getElementById('newOriginalUrl')) document.getElementById('newOriginalUrl').value = manga.originalurl || '';
+            if (document.getElementById('newMangaSlug')) document.getElementById('newMangaSlug').value = manga.slug || '';
+            if (document.getElementById('newMangaStatus')) document.getElementById('newMangaStatus').value = manga.status || 'Ongoing';
+            if (document.getElementById('newLastChapter')) document.getElementById('newLastChapter').value = manga.lastchapter || '0';
+            if (document.getElementById('newNeedsExtract')) {
+                document.getElementById('newNeedsExtract').checked = (manga.needsextract === true || manga.needsextract === 'true');
+            }
+            if (manga.releaseday) {
+                const days = manga.releaseday.split(',').map(d => d.trim());
+                document.querySelectorAll('.release-day-cb').forEach(cb => {
+                    cb.checked = days.includes(cb.value);
+                });
+            } else {
+                document.querySelectorAll('.release-day-cb').forEach(cb => cb.checked = false);
+            }
+            if (document.getElementById('newCostPerChapter')) document.getElementById('newCostPerChapter').value = manga.costperchapter || 0;
+            if (document.getElementById('newLockedTranslator')) {
+                document.getElementById('newLockedTranslator').value = manga.lockedtranslator || '';
+                if (ssLockedTranslator) ssLockedTranslator.setSelected(manga.lockedtranslator || '');
+            }
+            if (document.getElementById('newNotifyOnAdd')) {
+                document.getElementById('newNotifyOnAdd').checked = (manga.notifyonadd === true || manga.notifyonadd === 'true');
+            }
+            if (document.getElementById('newIsUrgent')) {
+                document.getElementById('newIsUrgent').checked = isUrgentManga(manga);
+            }
+            if (document.getElementById('newMangaModalTitle')) document.getElementById('newMangaModalTitle').innerText = 'แก้ไขข้อมูลมังงะ';
+        }, 300); // Wait for modal to open and settle
+    }
+
+    function deleteManga(id) {
+        if (!id) return;
+        Swal.fire({
+            title: 'ยืนยันการลบ?',
+            text: "ข้อมูลจะถูกลบถาวร",
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#dc2626',
+            cancelButtonText: 'ยกเลิก',
+            confirmButtonText: 'ลบข้อมูล'
+        }).then((result) => {
+            if (result.isConfirmed) {
+                showLoader(true);
+                google.script.run
+                    .withSuccessHandler((response) => {
+                        showToast('ลบข้อมูลเรียบร้อยแล้ว');
+                        onDataLoaded(response);
+                    })
+                    .withFailureHandler(onError)
+                    .deleteManga(id);
+            }
+        });
+    }
+
+    // --- SYSTEM TRIGGER HANDLERS ---
+    window.handleCreateMoveTrigger = function () {
+        showLoader(true);
+        google.script.run
+            .withSuccessHandler(res => {
+                showLoader(false);
+                Swal.fire('สำเร็จ', res, 'success');
+            })
+            .withFailureHandler(onError)
+            .createMovePendingTrigger();
+    };
+
+    window.handleManualMovePending = function () {
+        Swal.fire({
+            title: 'ยืนยันการรันระบบ?',
+            text: 'ระบบจะย้ายงานที่ยังโพสต์ไม่เสร็จทั้งหมดจากเดือนก่อนๆ มาเป็นเดือนปัจจุบัน',
+            icon: 'question',
+            showCancelButton: true,
+            confirmButtonText: 'ตกลง',
+            cancelButtonText: 'ยกเลิก'
+        }).then(result => {
+            if (result.isConfirmed) {
+                showLoader(true);
+                google.script.run
+                    .withSuccessHandler(res => {
+                        showLoader(false);
+                        Swal.fire('สำเร็จ', res, 'success');
+                        loadQueueData(true); // Refresh queue list
+                    })
+                    .withFailureHandler(onError)
+                    .movePendingQueueToCurrentMonth();
+            }
+        });
+    };
+
+    window.handleCreateAutoQueueTrigger = function () {
+        showLoader(true);
+        google.script.run
+            .withSuccessHandler(res => {
+                showLoader(false);
+                Swal.fire('สำเร็จ', res, 'success');
+            })
+            .withFailureHandler(onError)
+            .createAutoQueueTrigger();
+    };
+
+    function showToast(message) {
+        const toast = document.getElementById('toast');
+        if (toast) {
+            toast.innerText = message || 'Saved successfully!';
+            toast.classList.add('show');
+            setTimeout(() => toast.classList.remove('show'), 3000);
+        }
+    }
+
+    // --- QUEUE FUNCTIONS ---
+    // งานด่วน: ค่าจากชีทอาจมาเป็น boolean หรือ string ('TRUE'/'true') แล้วแต่วิธีกรอกในชีท
+    function isUrgentManga(manga) {
+        if (!manga) return false;
+        const v = manga.isurgent;
+        return v === true || String(v).toLowerCase() === 'true';
+    }
+
+    // --- BULK QUEUE ACTIONS ---
+    window.toggleSelectAllFiltered = function (checked) {
+        if (!currentFilteredQueue || currentFilteredQueue.length === 0) return;
+        
+        currentFilteredQueue.forEach(q => {
+            const qid = q.queueid.toString();
+            if (checked) {
+                selectedQueueIds.add(qid);
+            } else {
+                selectedQueueIds.delete(qid);
+            }
+        });
+
+        // Update DOM checkboxes in the table
+        const checkboxes = document.querySelectorAll('.queue-row-checkbox');
+        checkboxes.forEach(cb => {
+            cb.checked = checked;
+            const tr = cb.closest('tr');
+            if (tr) {
+                if (checked) tr.classList.add('selected-row');
+                else tr.classList.remove('selected-row');
+            }
+        });
+
+        updateBulkActionBar();
+    };
+
+    window.handleQueueCheckboxChange = function (queueId, checked) {
+        const qidStr = queueId.toString();
+        if (checked) {
+            selectedQueueIds.add(qidStr);
+        } else {
+            selectedQueueIds.delete(qidStr);
+        }
+
+        const tr = document.getElementById(`row-q-${qidStr}`);
+        if (tr) {
+            if (checked) tr.classList.add('selected-row');
+            else tr.classList.remove('selected-row');
+        }
+
+        updateBulkActionBar();
+    };
+
+    window.clearQueueSelection = function () {
+        selectedQueueIds.clear();
+        const checkboxes = document.querySelectorAll('.queue-row-checkbox');
+        checkboxes.forEach(cb => {
+            cb.checked = false;
+            const tr = cb.closest('tr');
+            if (tr) tr.classList.remove('selected-row');
+        });
+        updateBulkActionBar();
+    };
+
+    window.updateBulkActionBar = function () {
+        const count = selectedQueueIds.size;
+        const badge = document.getElementById('selectedCountBadge');
+        if (badge) badge.innerText = count;
+
+        const btnClear = document.getElementById('btnClearQueueSelection');
+        if (btnClear) {
+            btnClear.style.display = count > 0 ? 'inline-flex' : 'none';
+        }
+
+        const btnApply = document.getElementById('btnBulkApplyStatus');
+        if (btnApply) {
+            if (count > 0) {
+                btnApply.disabled = false;
+                btnApply.style.opacity = '1';
+                btnApply.style.cursor = 'pointer';
+                btnApply.innerHTML = `<span>⚡ อัปเดตสถานะ (${count} รายการ)</span>`;
+            } else {
+                btnApply.disabled = true;
+                btnApply.style.opacity = '0.6';
+                btnApply.style.cursor = 'not-allowed';
+                btnApply.innerHTML = `<span>⚡ อัปเดตสถานะทั้งหมด</span>`;
+            }
+        }
+
+        // Sync header toggle and bar toggle based on visible/filtered items
+        const headerToggle = document.getElementById('selectAllQueueHeader');
+        const barToggle = document.getElementById('bulkSelectAllToggle');
+        const totalVisible = currentFilteredQueue ? currentFilteredQueue.length : 0;
+
+        let visibleSelectedCount = 0;
+        if (totalVisible > 0) {
+            currentFilteredQueue.forEach(q => {
+                if (selectedQueueIds.has(q.queueid.toString())) {
+                    visibleSelectedCount++;
+                }
+            });
+        }
+
+        const allVisibleSelected = totalVisible > 0 && visibleSelectedCount === totalVisible;
+        const someVisibleSelected = visibleSelectedCount > 0 && visibleSelectedCount < totalVisible;
+
+        if (headerToggle) {
+            headerToggle.checked = allVisibleSelected;
+            headerToggle.indeterminate = someVisibleSelected;
+            headerToggle.disabled = totalVisible === 0;
+        }
+        if (barToggle) {
+            barToggle.checked = allVisibleSelected;
+            barToggle.indeterminate = someVisibleSelected;
+            barToggle.disabled = totalVisible === 0;
+        }
+
+        // Highlight toolbar when items are selected
+        const bar = document.getElementById('bulkActionBar');
+        if (bar) {
+            if (count > 0) {
+                bar.style.borderColor = 'var(--primary-color)';
+                bar.style.background = 'rgba(99, 102, 241, 0.12)';
+            } else {
+                bar.style.borderColor = 'var(--border-color)';
+                bar.style.background = 'rgba(99, 102, 241, 0.05)';
+            }
+        }
+    };
+
+    window.populateBulkAssignee = function (team) {
+        const select = document.getElementById('bulkAssigneeSelect');
+        if (!select) return;
+        const currentVal = select.value;
+        select.innerHTML = '<option value="__KEEP__">-- คงเดิม --</option>';
+        if (Array.isArray(team)) {
+            team.forEach(m => {
+                if (m.status === 'Active') {
+                    const opt = document.createElement('option');
+                    opt.value = m.name;
+                    opt.textContent = m.name + (m.role ? ` (${m.role})` : '');
+                    select.appendChild(opt);
+                }
+            });
+        }
+        if (currentVal) select.value = currentVal;
+    };
+
+    window.applyBulkQueueStatus = function () {
+        if (selectedQueueIds.size === 0) {
+            Swal.fire({
+                icon: 'warning',
+                title: 'ยังไม่ได้เลือกรายการ',
+                text: 'กรุณาติ๊กเลือกรายการคิวงานที่ต้องการอัปเดตสถานะอย่างน้อย 1 รายการ'
+            });
+            return;
+        }
+
+        const step = document.getElementById('bulkStepSelect').value;
+        const status = document.getElementById('bulkStatusSelect').value;
+        const assignee = document.getElementById('bulkAssigneeSelect').value;
+
+        const stepLabels = {
+            'upload': 'อัป Raw',
+            'extract': 'ดึงคำ',
+            'translate': 'แปล',
+            'typeset': 'ลงคำ',
+            'publish': 'Publish (เผยแพร่)',
+            'post': 'โพสต์'
+        };
+        const stepLabel = stepLabels[step] || step;
+        const count = selectedQueueIds.size;
+
+        let assigneeHtml = '';
+        if (assignee && assignee !== '__KEEP__') {
+            assigneeHtml = `<div style="margin-top: 0.4rem; font-size: 0.9rem; color: #94a3b8;">ผู้รับผิดชอบ: <b style="color: #f1f5f9;">${assignee}</b></div>`;
+        }
+
+        Swal.fire({
+            title: 'ยืนยันการเปลี่ยนสถานะ?',
+            html: `
+                <div style="text-align: left; background: #0f172a; padding: 1rem; border-radius: 0.5rem; margin-top: 0.5rem; border: 1px solid #1e293b;">
+                    <div style="margin-bottom: 0.4rem;">จำนวนที่เลือก: <strong style="color: #818cf8; font-size: 1.1rem;">${count}</strong> รายการ</div>
+                    <div style="margin-bottom: 0.4rem;">ขั้นตอน: <strong>${stepLabel}</strong></div>
+                    <div>เปลี่ยนสถานะเป็น: <strong style="color: #4ade80; font-size: 1.05rem;">${status}</strong></div>
+                    ${assigneeHtml}
+                </div>
+            `,
+            icon: 'question',
+            showCancelButton: true,
+            confirmButtonColor: '#4f46e5',
+            cancelButtonColor: '#475569',
+            confirmButtonText: `ยืนยันอัปเดต (${count} รายการ)`,
+            cancelButtonText: 'ยกเลิก'
+        }).then((result) => {
+            if (result.isConfirmed) {
+                showLoader(true);
+                const idsArray = Array.from(selectedQueueIds);
+                google.script.run
+                    .withSuccessHandler(response => {
+                        showLoader(false);
+                        if (response && response.success) {
+                            clearQueueSelection();
+                            if (response.queue) {
+                                queueList = response.queue;
+                            }
+                            filterQueue();
+                            updateQueueStats(queueList);
+                            renderDashboard();
+                            Swal.fire({
+                                icon: 'success',
+                                title: 'อัปเดตสถานะสำเร็จ!',
+                                text: `เปลี่ยนสถานะขั้นตอน ${stepLabel} เป็น "${status}" เรียบร้อยแล้ว (${response.count || count} รายการ)`,
+                                timer: 2000,
+                                showConfirmButton: false
+                            });
+                        } else {
+                            Swal.fire('เกิดข้อผิดพลาด', (response && response.error) || 'ไม่สามารถอัปเดตสถานะได้', 'error');
+                        }
+                    })
+                    .withFailureHandler(err => {
+                        showLoader(false);
+                        Swal.fire('เกิดข้อผิดพลาด', err.toString(), 'error');
+                    })
+                    .bulkUpdateQueueStep(idsArray, step, status, assignee);
+            }
+        });
+    };
+
+    function renderQueueTable(data) {
+        const tbody = document.getElementById('queueTableBody');
+        if (!tbody) return;
+        tbody.innerHTML = '';
+
+        if (!data || data.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; padding: 2rem;">ไม่มีข้อมูลคิวงาน</td></tr>';
+            return;
+        }
+
+        data.forEach(q => {
+            const tr = document.createElement('tr');
+            tr.id = `row-q-${q.queueid}`; // Added ID for granular updates
+            const isSelected = selectedQueueIds.has(q.queueid.toString());
+            if (isSelected) {
+                tr.classList.add('selected-row');
+            }
+
+            const manga = mangaList.find(m => m.mangaid != null && q.mangaid != null && String(m.mangaid) === String(q.mangaid));
+            const mangaName = manga ? manga.manganame : 'Unknown';
+            const isUrgent = isUrgentManga(manga);
+            const nameStyle = isUrgent
+                ? 'font-weight: 700; color: #dc2626;'
+                : 'font-weight: 500;';
+            const createdDate = q.createdat ? new Date(q.createdat) : null;
+            const dateStr = createdDate ? createdDate.toLocaleDateString('th-TH') + ' ' + createdDate.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : '-';
+
+            // Duration Calculations (New Flow)
+            const upDur = formatDuration(q.createdat, q.uploadtime);
+            const exDur = formatDuration(q.uploadtime, q.extracttime);
+            const trDur = formatDuration(q.extracttime, q.translatetime);
+            const tsDur = formatDuration(q.translatetime, q.typesettime);
+            const pbDur = formatDuration(q.typesettime, q.publishtime);
+
+            tr.innerHTML = `
+                <td style="padding: 1rem 0.5rem; border-bottom: 1px solid #eee; text-align: center;">
+                    <input type="checkbox" class="queue-row-checkbox" value="${q.queueid}" 
+                        ${isSelected ? 'checked' : ''} 
+                        onchange="handleQueueCheckboxChange('${q.queueid}', this.checked)" 
+                        style="width: 18px; height: 18px; cursor: pointer; accent-color: var(--primary-color);">
+                </td>
+                <td style="padding: 1rem; border-bottom: 1px solid #eee;">
+                    <div style="font-size: 0.7rem; color: #999;">${dateStr}</div>
+                    <div style="${nameStyle}" id="manga-name-${q.queueid}">${isUrgent ? '🔥 ' : ''}${mangaName}${isUrgent ? ' <span style="font-size: 0.7rem; font-weight: 700; color: #b91c1c; background: #fee2e2; border: 1px solid #fecaca; border-radius: 0.35rem; padding: 0.05rem 0.35rem; vertical-align: middle;">ด่วน</span>' : ''}</div>
+                    <div style="font-size: 0.85rem; color: #666;">ตอนที่ ${q.chapter}</div>
+                </td>
+                <td style="padding: 1rem; border-bottom: 1px solid #eee;">
+                    ${getStatusBadge(q.uploadstatus, q.queueid, 'upload')}
+                    <div class="step-meta">${q.uploadername || '-'} ${upDur ? `<br><small>⏱️ ${upDur}</small>` : ''}</div>
+                    ${getStepLink(q.worklink, 'อัป Raw')}
+                </td>
+                <td style="padding: 1rem; border-bottom: 1px solid #eee;">
+                    ${getStatusBadge(q.extractstatus, q.queueid, 'extract')}
+                    <div class="step-meta">${q.extractorname || '-'} ${exDur ? `<br><small>⏱️ ${exDur}</small>` : ''}</div>
+                    ${getStepLink(q.worklink, 'ดึงคำ')}
+                </td>
+                <td style="padding: 1rem; border-bottom: 1px solid #eee;">
+                    ${getStatusBadge(q.translatestatus, q.queueid, 'translate')}
+                    <div class="step-meta">${q.translatorname || '-'} ${trDur ? `<br><small>⏱️ ${trDur}</small>` : ''}</div>
+                    ${getStepLink(q.worklink, 'แปล')}
+                </td>
+                <td style="padding: 1rem; border-bottom: 1px solid #eee;">
+                    ${getStatusBadge(q.typesetstatus, q.queueid, 'typeset')}
+                    <div class="step-meta">${q.typesettername || '-'} ${tsDur ? `<br><small>⏱️ ${tsDur}</small>` : ''}</div>
+                    ${getStepLink(q.worklink, 'ลงคำ')}
+                </td>
+                <td style="padding: 1rem; border-bottom: 1px solid #eee;">
+                    ${getStatusBadge(q.publishstatus, q.queueid, 'publish')}
+                    <div class="step-meta">${q.publishername || '-'} ${pbDur ? `<br><small>⏱️ ${pbDur}</small>` : ''}</div>
+                    ${getStepLink(q.worklink, 'เผยแพร่')}
+                </td>
+                <td style="padding: 1rem; border-bottom: 1px solid #eee;">
+                    ${getStatusBadge(q.poststatus, q.queueid, 'post')}
+                    <div class="step-meta">${q.postername || '-'}</div>
+                </td>
+                <td style="padding: 1rem; border-bottom: 1px solid #eee; font-size: 0.85rem;">
+                    ${formatNotes(q.note)}
+                </td>
+                <td style="padding: 1rem; border-bottom: 1px solid #eee; text-align: center;">
+                    <button class="btn" style="padding: 0.4rem; background: #f1f5f9; color: #4f46e5; border: 1px solid #e2e8f0;" 
+                        title="แก้ไขแบบรวม" onclick="openUpdateQueueModal(${JSON.stringify(q).replace(/"/g, '&quot;')}, '${mangaName.replace(/'/g, "\\'")}')">
+                        ✏️
+                    </button>
+                    <button class="btn" style="padding: 0.4rem; background: #fee2e2; color: #dc2626; border: 1px solid #fecaca; margin-top: 0.5rem;" 
+                        title="ลบคิวงาน" onclick="deleteQueue('${q.queueid}')">
+                        🗑️
+                    </button>
+                </td>
+        `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    function getStatusBadge(status, id, step) {
+        const colors = {
+            'เสร็จแล้ว': { bg: 'rgba(34, 197, 94, 0.18)', text: '#4ade80' },
+            'กำลังทำ': { bg: 'rgba(234, 179, 8, 0.18)', text: '#facc15' },
+            'รอเริ่ม': { bg: '#1e293b', text: '#94a3b8' },
+            'Skipped': { bg: '#151d2f', text: '#64748b' }
+        };
+        const style = colors[status] || colors['รอเริ่ม'];
+        const statusText = status === 'Skipped' ? 'ข้าม' : (status || 'รอเริ่ม');
+
+        // Always call openStepModal - it will handle lock checking with expiration
+        const onclickAction = status === 'Skipped' ? '' : `openStepModal('${id}', '${step}', '${status}')`;
+
+        return `<span class="status-badge"
+        style="background: ${style.bg}; color: ${style.text}; ${status === 'Skipped' ? 'opacity: 0.5; cursor: not-allowed;' : ''}"
+        onclick="${onclickAction}">
+            ${statusText}
+        </span>`;
+    }
+
+    function openStepModal(id, step, currentStatus) {
+        // Team data is already loaded on initial page load
+        proceedOpenStepModal(id, step, currentStatus);
+    }
+
+    function proceedOpenStepModal(id, step, currentStatus) {
+        // Store current queue item and step info
+        document.getElementById('stepQueueId').value = id;
+        document.getElementById('stepName').value = step;
+        document.getElementById('stepStatus').value = currentStatus || 'รอเริ่ม';
+
+        // Clear previous values
+        document.getElementById('stepLink').value = '';
+        document.getElementById('stepNote').value = '';
+
+        // Set modal title and define allowed roles
+        const stepLabels = {
+            'upload': '🔼 อัปโหลด Raw',
+            'extract': '📝 ดึงคำ (Extractor)',
+            'translate': '🌐 แปล (Translator)',
+            'typeset': '✍️ ลงคำ (Typesetter)',
+            'publish': '📤 เผยแพร่ (Publisher)',
+            'post': '📮 โพสต์ (Post)'
+        };
+        document.getElementById('stepModalTitle').innerText = 'อัปเดต: ' + (stepLabels[step] || step);
+
+        // Define allowed roles for each step
+        const roleMapping = {
+            'upload': ['Raw Provider/Uploader', 'Multi-role'],
+            'extract': ['Cleaner/Draft', 'Multi-role'],
+            'translate': ['Translator', 'Multi-role'],
+            'typeset': ['Editor/Typesetter', 'Multi-role'],
+            'publish': ['Raw Provider/Uploader', 'Multi-role'],
+            'post': ['Poster', 'Multi-role']
+        };
+        const allowedRoles = roleMapping[step] || [];
+
+        // Populate assignee dropdown with filter
+        populateStepAssignee(teamList, allowedRoles);
+
+        // Get current assignee from queue data
+        const queue = queueList.find(q => q.queueid.toString() === id.toString());
+        if (queue) {
+            // Map step to correct data property
+            const assigneeFields = {
+                'upload': 'uploadername',
+                'extract': 'extractorname',
+                'translate': 'translatorname',
+                'typeset': 'typesettername',
+                'publish': 'publishername',
+                'post': 'postername'
+            };
+            const assigneeField = assigneeFields[step] || (step.toLowerCase() + 'name');
+            const currentAssignee = queue[assigneeField] || '';
+
+            // Set the value (populateStepAssignee has just run, so options exist)
+            document.getElementById('stepAssignee').value = currentAssignee;
+        }
+
+        document.getElementById('stepModal').style.display = 'flex';
+    }
+
+    function closeStepModal() {
+        document.getElementById('stepModal').style.display = 'none';
+    }
+
+    function populateStepAssignee(team, allowedRoles) {
+        const select = document.getElementById('stepAssignee');
+        if (!select) return;
+        const currentVal = select.value;
+        select.innerHTML = '<option value="">-- เลือกผู้รับผิดชอบ --</option>';
+
+        team.forEach(m => {
+            // Filter by allowed roles if provided, otherwise show all
+            if (!allowedRoles || allowedRoles.length === 0 || allowedRoles.includes(m.role)) {
+                const opt = document.createElement('option');
+                opt.value = m.name;
+                opt.textContent = m.name + (m.role ? ` (${m.role})` : '');
+                select.appendChild(opt);
+            }
+        });
+
+        // Preserve current value if it exists in the new options, or allows showing current assignee even if role changed
+        if (currentVal) {
+            // Check if the current value is already added, if not (e.g. role changed but still assigned), maybe add it? 
+            // For now, standard behavior: try to set value.
+            select.value = currentVal;
+        }
+    }
+
+    function handleStepSubmit(e) {
+        e.preventDefault();
+        const btn = e.target.querySelector('button[type="submit"]');
+        const originalText = btn.innerText;
+
+        const queueId = document.getElementById('stepQueueId').value;
+        const step = document.getElementById('stepName').value;
+        const status = document.getElementById('stepStatus').value;
+        const assignee = document.getElementById('stepAssignee').value;
+        const link = document.getElementById('stepLink').value;
+        const note = document.getElementById('stepNote').value;
+
+        // === OPTIMISTIC UI UPDATE ===
+        // 1. Save current state for rollback
+        const queueItem = queueList.find(q => q.queueid.toString() === queueId.toString());
+        if (!queueItem) {
+            Swal.fire('Error', 'Queue item not found', 'error');
+            return;
+        }
+
+        const backup = JSON.parse(JSON.stringify(queueItem)); // Deep copy
+
+        // 2. Update local data immediately
+        const statusField = step.toLowerCase() + 'status';
+        const nameField = {
+            'upload': 'uploadername',
+            'extract': 'extractorname',
+            'translate': 'translatorname',
+            'typeset': 'typesettername',
+            'publish': 'publishername',
+            'post': 'postername'
+        }[step.toLowerCase()];
+        const timeField = step.toLowerCase() + 'time';
+
+        queueItem[statusField] = status;
+        if (nameField && assignee !== undefined) {
+            queueItem[nameField] = assignee;
+        }
+        if (status === 'เสร็จแล้ว') {
+            queueItem[timeField] = new Date().toISOString();
+        }
+        // If publish is marked as 'เสร็จแล้ว', ensure poststatus is initialized to 'รอเริ่ม' if empty
+        if (step.toLowerCase() === 'publish' && status === 'เสร็จแล้ว') {
+            if (!queueItem.poststatus || String(queueItem.poststatus).trim() === '') {
+                queueItem.poststatus = 'รอเริ่ม';
+            }
+        }
+
+        // 3. Update UI immediately (Optimistic)
+        closeStepModal();
+        filterQueue();
+        showToast('กำลังบันทึก...');
+
+        // 4. Send to backend in background
+        google.script.run
+            .withSuccessHandler(response => {
+                if (response.error) {
+                    // Rollback on error
+                    console.error('Backend error:', response.error);
+                    const index = queueList.findIndex(q => q.queueid.toString() === queueId.toString());
+                    if (index !== -1) {
+                        queueList[index] = backup;
+                        filterQueue();
+                    }
+                    Swal.fire('Error', response.error, 'error');
+                } else {
+                    // Success - update with server data
+                    queueList = response.queue;
+                    filterQueue();
+                    showToast('✅ บันทึกสำเร็จ');
+                }
+            })
+            .withFailureHandler(err => {
+                // Rollback on failure
+                console.error('Backend failure:', err);
+                const index = queueList.findIndex(q => q.queueid.toString() === queueId.toString());
+                if (index !== -1) {
+                    queueList[index] = backup;
+                    filterQueue();
+                }
+                Swal.fire('Error', 'การบันทึกล้มเหลว: ' + err.message, 'error');
+            })
+            .updateQueueStep(queueId, step, status, assignee, link, note);
+    }
+
+    function getStepLink(worklink, stepLabel) {
+        if (!worklink) return '';
+
+        const links = String(worklink).split('\n').filter(l => l.trim());
+        let html = '';
+
+        links.forEach(linkStr => {
+            // Check if link starts with [StepLabel]
+            const match = linkStr.match(/^\[(.*?)\]\s*(.*)$/);
+
+            if (match) {
+                // Labeled link
+                const label = match[1];
+                const url = match[2];
+
+                if (label === stepLabel) {
+                    html += `<a href="${url}" target="_blank" class="step-link" title="${label}">🔗 Link</a>`;
+                }
+            } else {
+                // Legacy link (no label) - show in 'Upload Raw' or 'Work Link' if you want. 
+                // However, user asked to show "Link of each page". 
+                // If it's a legacy link, maybe just show it in the first column or ignore?
+                // Let's assume global links go to "Work Link" column or Note column? 
+                // But we removed "Work Link" column from table body logic (it was merged into notes).
+                // Let's decide: Only show links that match the step. Or...
+                // If we want to support legacy links, maybe we attach them to "อัป Raw" as default?
+                if (stepLabel === 'อัป Raw') { // Default place for unlabeled links
+                    html += `<a href="${linkStr}" target="_blank" class="step-link" title="Work Link">🔗 Link</a>`;
+                }
+            }
+        });
+
+        return html ? `<div style="margin-top: 4px;">${html}</div>` : '';
+    }
+
+    function formatNotes(note) {
+        if (!note) return '-';
+        const notes = String(note).split('\n').filter(n => n.trim());
+        let html = '<div style="font-size: 0.75rem; color: #666; max-width: 200px; white-space: pre-wrap;">';
+        notes.forEach(n => {
+            html += `<div style="margin-bottom: 0.25rem;">📝 ${n.trim()}</div>`;
+        });
+        html += '</div>';
+        return html;
+    }
+
+    function formatDuration(startTime, endTime) {
+        if (!startTime || !endTime) return "";
+        const start = new Date(startTime);
+        const end = new Date(endTime);
+        const diffMs = end - start;
+        if (diffMs <= 0) return "";
+
+        const diffHrs = diffMs / (1000 * 60 * 60);
+        if (diffHrs < 1) {
+            const mins = Math.round(diffMs / (1000 * 60));
+            return `${mins} นาที`;
+        }
+        if (diffHrs < 24) {
+            return `${diffHrs.toFixed(1)} ชม.`;
+        }
+        const days = Math.floor(diffHrs / 24);
+        const remainingHrs = Math.round(diffHrs % 24);
+        return `${days} วัน ${remainingHrs} ชม.`;
+    }
+
+    function deleteQueue(id) {
+        Swal.fire({
+            title: 'ลบคิวงาน?',
+            text: "ข้อมูลคิวนี้จะถูกลบถาวร",
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#dc2626',
+            confirmButtonText: 'ลบข้อมูล'
+        }).then((result) => {
+            if (result.isConfirmed) {
+                showLoader(true);
+                google.script.run
+                    .withSuccessHandler(response => {
+                        showToast('ลบคิวงานเรียบร้อยแล้ว');
+                        queueList = response.queue;
+                        filterQueue();
+                        showLoader(false);
+                    })
+                    .withFailureHandler(onError)
+                    .deleteQueueItem(id); // To be added to Code.gs
+            }
+        });
+    }
+
+    function openQueueModal(keepState = false) {
+        const form = document.getElementById('queueForm');
+        if (form && !keepState) {
+            form.reset();
+            if (typeof SlimSelect !== 'undefined') {
+                if (ssQueueManga) ssQueueManga.setSelected('');
+                // Reset Team Dropdowns
+                const teamFields = ['uploaderName', 'extractorName', 'translatorName', 'typesetterName', 'publisherName', 'posterName'];
+                teamFields.forEach(f => {
+                    if (ssTeam[f]) ssTeam[f].setSelected('');
+                });
+                if (ssWebsites['transCategorySelect']) ssWebsites['transCategorySelect'].setData([]); // Categories are dynamic
+            }
+            // Manually clear specific added fields if they aren't part of form.reset() behavior in some contexts
+            if (document.getElementById('rawLinkInput')) document.getElementById('rawLinkInput').value = '';
+            if (document.getElementById('extractLinkInput')) document.getElementById('extractLinkInput').value = '';
+        }
+
+        if (!keepState) {
+            if (document.getElementById('queueCostPerChapter')) document.getElementById('queueCostPerChapter').value = 0;
+        } else {
+            // If keeping state, ensure cost is set if manga is selected
+            const mid = document.getElementById('queueMangaId').value;
+            if (mid) {
+                const manga = mangaList.find(m => m.mangaid != null && String(m.mangaid) === String(mid));
+                if (manga && document.getElementById('queueCostPerChapter')) {
+                    document.getElementById('queueCostPerChapter').value = manga.costperchapter || 0;
+                }
+            }
+        }
+
+        document.getElementById('queueModal').style.display = 'flex';
+    }
+
+    function closeQueueModal() {
+        document.getElementById('queueModal').style.display = 'none';
+    }
+
+    function handleQueueSubmit(e) {
+        e.preventDefault();
+        const btn = e.target.querySelector('button[type="submit"]');
+        const originalText = btn.innerText;
+
+        const mangaId = document.getElementById('queueMangaId').value;
+        const manga = mangaList.find(m => m.mangaid != null && mangaId != null && String(m.mangaid) === String(mangaId));
+        const needsExtract = manga ? (manga.needsextract === true || manga.needsextract === 'true') : true;
+
+        const rawLink = document.getElementById('rawLinkInput').value.trim();
+        const extractLink = document.getElementById('extractLinkInput').value.trim();
+        const mainLink = document.getElementById('workLink').value.trim();
+
+        // Format step-specific links
+        let combinedLinks = mainLink;
+        if (rawLink) combinedLinks += (combinedLinks ? '\n' : '') + `[อัป Raw] ${rawLink} `;
+        if (extractLink) combinedLinks += (combinedLinks ? '\n' : '') + `[ดึงคำ] ${extractLink} `;
+
+        const queueData = {
+            mangaid: mangaId,
+            chapter: document.getElementById('queueChapter').value,
+            uploadstatus: 'รอเริ่ม',
+            uploadername: document.getElementById('uploaderName').value,
+            extractstatus: needsExtract ? 'รอเริ่ม' : 'Skipped',
+            extractorname: document.getElementById('extractorName').value,
+            translatestatus: 'รอเริ่ม',
+            translatorname: document.getElementById('translatorName').value,
+            typesetstatus: 'รอเริ่ม',
+            typesettername: document.getElementById('typesetterName').value,
+            publishername: document.getElementById('publisherName').value,
+            publishstatus: 'รอเริ่ม',
+            poststatus: 'รอเริ่ม',
+            worklink: combinedLinks,
+            note: document.getElementById('queueNote').value
+        };
+
+        // === OPTIMISTIC UI UPDATE ===
+        // 1. Prepare temp item
+        const tempId = 'TEMP-' + new Date().getTime();
+        const optimisticQueueItem = {
+            ...queueData,
+            queueid: tempId,
+            createdat: new Date().toISOString(),
+            uploadstatus: 'รอเริ่ม',
+            extractstatus: needsExtract ? 'รอเริ่ม' : 'Skipped',
+            translatestatus: 'รอเริ่ม',
+            typesetstatus: 'รอเริ่ม',
+            publishstatus: 'รอเริ่ม',
+            poststatus: 'รอเริ่ม',
+            manganame: manga ? manga.manganame : 'Unknown',
+            isOptimistic: true
+        };
+
+        // 2. Backup current state
+        const backupQueueList = [...queueList];
+        const backupMangaList = [...mangaList];
+
+        // 3. Update local data immediately
+        queueList.unshift(optimisticQueueItem);
+
+        // Update manga list locally (last chapter)
+        if (manga) {
+            const mIndex = mangaList.findIndex(m => m.mangaid != null && String(m.mangaid) === String(mangaId));
+            if (mIndex !== -1) {
+                const currentLast = parseFloat(mangaList[mIndex].lastchapter) || 0;
+                const newChapterNum = parseFloat(queueData.chapter) || 0;
+                if (newChapterNum >= currentLast) {
+                    mangaList[mIndex].lastchapter = newChapterNum;
+                    mangaList[mIndex].lastupdated = new Date().toISOString();
+                }
+            }
+        }
+
+        // 4. Update UI immediately
+        closeQueueModal();
+        renderMangaTable(mangaList); // Update Manga Table details too
+        filterQueue();
+        showToast('กำลังเพิ่มคิวงาน...');
+
+        // Background call for Manga sync if cost changed
+        const newCost = document.getElementById('queueCostPerChapter')?.value;
+        if (newCost !== undefined && manga && parseFloat(newCost) !== parseFloat(manga.costperchapter || 0)) {
+            google.script.run.updateManga(mangaId, { ...manga, costperchapter: newCost });
+        }
+
+        // Main background call
+        google.script.run
+            .withSuccessHandler(response => {
+                if (response.error) {
+                    console.error('Backend error:', response.error);
+                    queueList = backupQueueList;
+                    mangaList = backupMangaList;
+                    filterQueue();
+                    Swal.fire('Error', response.error, 'error');
+                } else {
+                    // Success - replace with real server data
+                    queueList = response.queue;
+                    filterQueue();
+                    showToast('✅ เพิ่มคิวงานเรียบร้อยแล้ว');
+                }
+            })
+            .withFailureHandler(err => {
+                console.error('Backend failure:', err);
+                queueList = backupQueueList;
+                mangaList = backupMangaList;
+                filterQueue();
+                Swal.fire('Error', 'การเพิ่มคิวล้มเหลว: ' + err.message, 'error');
+            })
+            .addQueue(queueData);
+    }
+
+    function renderTeamTable(data) {
+        const tbody = document.getElementById('teamTableBody');
+        if (!tbody) return;
+        tbody.innerHTML = '';
+
+        if (!data || data.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; padding: 2rem; color: #666;">ยังไม่มีสมาชิกในทีม</td></tr>';
+            return;
+        }
+
+        data.forEach(m => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+            <td style="padding: 1rem; border-bottom: 1px solid #eee;">
+                    <div style="font-weight: 500;">${m.name}</div>
+                    <div style="font-size: 0.75rem; color: #999;">ID: ${m.memberid}</div>
+                </td>
+                <td style="padding: 1rem; border-bottom: 1px solid #eee;">${m.role || '-'}</td>
+                <td style="padding: 1rem; border-bottom: 1px solid #eee;">
+                    <span style="padding: 0.2rem 0.6rem; border-radius: 1rem; font-size: 0.75rem; 
+                        background: ${m.status === 'Active' ? '#dcfce7' : '#f1f5f9'}; 
+                        color: ${m.status === 'Active' ? '#166534' : '#475569'};">
+                        ${m.status || 'Active'}
+                    </span>
+                </td>
+                <td style="padding: 1rem; border-bottom: 1px solid #eee; text-align: center;">
+                    <button class="btn" style="padding: 0.25rem 0.5rem; font-size: 0.85rem; margin-right: 0.5rem;" onclick="editTeamMember('${m.memberid}')">✏️</button>
+                    <button class="btn" style="padding: 0.25rem 0.5rem; background: #fee2e2; color: #dc2626;" onclick="deleteTeamMember('${m.memberid}')">🗑️</button>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    function openTeamModal() {
+        document.getElementById('memberId').value = '';
+        document.getElementById('teamForm').reset();
+        document.getElementById('teamModalTitle').innerText = 'เพิ่มสมาชิกทีม';
+        document.getElementById('teamModal').style.display = 'flex';
+    }
+
+    function closeTeamModal() {
+        document.getElementById('teamModal').style.display = 'none';
+    }
+
+    function handleTeamSubmit(e) {
+        e.preventDefault();
+        const btn = e.target.querySelector('button[type="submit"]');
+        const originalText = btn.innerText;
+        btn.innerText = 'กำลังบันทึก...';
+        btn.disabled = true;
+        showLoader(true);
+
+        const id = document.getElementById('memberId').value;
+        const memberData = {
+            name: document.getElementById('memberName').value,
+            role: document.getElementById('memberRole').value,
+            status: document.getElementById('memberStatus').value
+        };
+
+        if (id) {
+            // Edit mode
+            google.script.run
+                .withSuccessHandler(data => {
+                    btn.innerText = originalText;
+                    btn.disabled = false;
+                    showLoader(false);
+                    closeTeamModal();
+                    showToast('อัปเดตข้อมูลสมาชิกเรียบร้อย');
+                    teamList = data;
+                    renderTeamTable(teamList);
+                    populateTeamDropdowns(teamList);
+                })
+                .withFailureHandler(err => {
+                    btn.innerText = originalText;
+                    btn.disabled = false;
+                    showLoader(false);
+                    Swal.fire('Error', err.message, 'error');
+                })
+                .updateTeamMember(id, memberData);
+        } else {
+            // Add mode
+            google.script.run
+                .withSuccessHandler(data => {
+                    btn.innerText = originalText;
+                    btn.disabled = false;
+                    showLoader(false);
+                    closeTeamModal();
+                    showToast('เพิ่มสมาชิกใหม่เรียบร้อย');
+                    teamList = data;
+                    renderTeamTable(teamList);
+                    populateTeamDropdowns(teamList);
+                })
+                .withFailureHandler(err => {
+                    btn.innerText = originalText;
+                    btn.disabled = false;
+                    showLoader(false);
+                    Swal.fire('Error', err.message, 'error');
+                })
+                .addTeamMember(memberData);
+        }
+    }
+
+    function editTeamMember(id) {
+        if (!id) return;
+        const member = teamList.find(m => m.memberid && m.memberid.toString() === id.toString());
+        if (!member) return;
+
+        document.getElementById('memberId').value = member.memberid;
+        document.getElementById('memberName').value = member.name || '';
+        document.getElementById('memberRole').value = member.role || 'Translator';
+        document.getElementById('memberStatus').value = member.status || 'Active';
+
+        document.getElementById('teamModalTitle').innerText = 'แก้ไขข้อมูลสมาชิก';
+        document.getElementById('teamModal').style.display = 'flex';
+    }
+
+    function deleteTeamMember(id) {
+        Swal.fire({
+            title: 'ยืนยันการลบ?',
+            text: "หากลบแล้ว รายชื่อนี้จะไม่ปรากฏใน Dropdown อีก",
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#dc2626',
+            confirmButtonText: 'ลบสมาชิก'
+        }).then((result) => {
+            if (result.isConfirmed) {
+                showLoader(true);
+                google.script.run
+                    .withSuccessHandler(data => {
+                        showToast('ลบสมาชิกเรียบร้อย');
+                        teamList = data;
+                        renderTeamTable(teamList);
+                        populateTeamDropdowns(teamList);
+                        showLoader(false);
+                    })
+                    .withFailureHandler(onError)
+                    .deleteTeamMember(id);
+            }
+        });
+    }
+
+    // Modal Outside Click
+    window.onclick = function (event) {
+        const mangaModal = document.getElementById('mangaModalNew');
+        const queueModal = document.getElementById('queueModal');
+        const teamModal = document.getElementById('teamModal');
+        if (event.target == mangaModal) closeMangaModal();
+        if (event.target == queueModal) closeQueueModal();
+        if (event.target == teamModal) closeTeamModal();
+    };
+
+    // Auto-populate cost when manga is selected in Add Queue modal
+    document.addEventListener('change', function (e) {
+        if (e.target && e.target.id === 'queueMangaId') {
+            const mid = e.target.value;
+            const costInput = document.getElementById('queueCostPerChapter');
+            if (mid && costInput) {
+                const manga = mangaList.find(m => m.mangaid != null && String(m.mangaid) === String(mid));
+                if (manga) costInput.value = manga.costperchapter || 0;
+                else costInput.value = 0;
+            } else if (costInput) {
+                costInput.value = 0;
+            }
+        }
+    });
+</script>
