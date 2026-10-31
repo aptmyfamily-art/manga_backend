@@ -400,12 +400,27 @@ export function KuaiKanLoginModal({
         return
       }
 
+      // สกัด comicId และ chapter title อัตโนมัติจาก HTML
+      let detectedComicId = 855368
+      let detectedTitle = "第366话 真真假假"
+      let detectedTopicTitle = "我！天命大反派"
+
+      const comicIdMatch = htmlInput.match(/\/image\/c(\d+)\//i)
+      if (comicIdMatch && comicIdMatch[1]) {
+        detectedComicId = parseInt(comicIdMatch[1], 10)
+      }
+
+      const altMatch = htmlInput.match(/alt=["']([^"']+)["']/i)
+      if (altMatch && altMatch[1] && altMatch[1].trim()) {
+        detectedTitle = altMatch[1].trim()
+      }
+
       toast.info(`✓ สกัดภาพจาก HTML สำเร็จ ${urls.length} ภาพ กำลังส่งบันทึกเข้าระบบ...`)
 
       const saveRes = await callGasApi<any>("SAVE_KUAIKAN_AUTH", {
-        comicId: 855368,
-        title: "第366话 真真假假",
-        topicTitle: "我！天命大反派",
+        comicId: detectedComicId,
+        title: detectedTitle,
+        topicTitle: detectedTopicTitle,
         images: urls,
       })
 
@@ -1134,7 +1149,7 @@ export function KuaiKanLoginModal({
                         </Button>
                       </div>
                       <div className="text-[10px] text-slate-400 text-center">
-                        ✂️ เย็บภาพต่อกันแนวตั้ง 20 หน้า/ไฟล์ (ความกว้างเท่ากัน ปรับสเกลหน้าปกให้อัตโนมัติ)
+                        ✂️ คำนวณรวมภาพทั้งหมดออกมาให้ได้ 20 หน้า (ความกว้างมาตรฐานเท่ากัน ปรับสเกลหน้าปกให้อัตโนมัติ)
                       </div>
                     </div>
                   )}
