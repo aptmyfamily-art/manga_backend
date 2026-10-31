@@ -3,9 +3,9 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
-import { callGasApi, getGasUrl, setGasUrl } from "@/api/gasClient"
+import { callGasApi } from "@/api/gasClient"
 import { toast } from "sonner"
-import { Lock, BookOpen, Settings2 } from "lucide-react"
+import { Lock, BookOpen } from "lucide-react"
 
 interface PasscodeGateProps {
   onAuthenticated: (passcode: string) => void
@@ -14,8 +14,6 @@ interface PasscodeGateProps {
 export function PasscodeGate({ onAuthenticated }: PasscodeGateProps) {
   const [passcode, setPasscode] = React.useState("")
   const [loading, setLoading] = React.useState(false)
-  const [showApiConfig, setShowApiConfig] = React.useState(false)
-  const [apiUrl, setApiUrl] = React.useState(getGasUrl())
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -26,9 +24,6 @@ export function PasscodeGate({ onAuthenticated }: PasscodeGateProps) {
 
     setLoading(true)
     try {
-      if (apiUrl.trim()) {
-        setGasUrl(apiUrl.trim())
-      }
       const res = await callGasApi<{ valid: boolean }>(
         "VERIFY_PASSCODE",
         { passcode: passcode.trim() },
@@ -79,34 +74,9 @@ export function PasscodeGate({ onAuthenticated }: PasscodeGateProps) {
               />
             </div>
 
-            {showApiConfig && (
-              <div className="space-y-1.5 pt-2 border-t border-[#26334d]">
-                <Label className="text-xs text-slate-400">
-                  GAS Web App URL (Exec Endpoint)
-                </Label>
-                <Input
-                  type="url"
-                  value={apiUrl}
-                  onChange={(e) => setApiUrl(e.target.value)}
-                  className="text-xs h-9"
-                />
-              </div>
-            )}
-
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? "กำลังตรวจสอบ..." : "เข้าสู่ระบบ"}
             </Button>
-
-            <div className="text-center pt-1">
-              <button
-                type="button"
-                onClick={() => setShowApiConfig((s) => !s)}
-                className="inline-flex items-center gap-1 text-xs text-slate-400 hover:text-slate-200 cursor-pointer"
-              >
-                <Settings2 className="h-3.5 w-3.5" />
-                {showApiConfig ? "ซ่อนตั้งค่า API URL" : "ตั้งค่า GAS API URL"}
-              </button>
-            </div>
           </form>
         </CardContent>
       </Card>

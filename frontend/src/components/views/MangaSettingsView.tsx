@@ -1,6 +1,8 @@
 import * as React from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import {
   Table,
@@ -11,7 +13,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { isUrgentManga, timeSince } from "@/lib/utils"
-import { callGasApi } from "@/api/gasClient"
+import { callGasApi, DEFAULT_GAS_URL, getGasUrl, setGasUrl } from "@/api/gasClient"
 import { toast } from "sonner"
 import {
   Plus,
@@ -21,6 +23,8 @@ import {
   Clock,
   Play,
   Database,
+  Link2,
+  RotateCcw,
 } from "lucide-react"
 
 interface MangaSettingsViewProps {
@@ -39,6 +43,7 @@ export function MangaSettingsView({
   onQueueChange,
 }: MangaSettingsViewProps) {
   const [triggerLoading, setTriggerLoading] = React.useState(false)
+  const [gasUrlInput, setGasUrlInput] = React.useState(getGasUrl())
 
   const handleDeleteManga = async (id: string) => {
     if (!window.confirm("ยืนยันการลบมังงะเรื่องนี้หรือไม่? ข้อมูลจะถูกลบถาวร"))
@@ -296,6 +301,45 @@ export function MangaSettingsView({
               >
                 <Database className="h-3.5 w-3.5 text-emerald-400" />
                 สร้าง/ตรวจสอบ Sheets ทั้งหมด
+              </Button>
+            </div>
+          </div>
+
+          <div className="md:col-span-3 space-y-2 rounded-xl border border-[#26334d] bg-[#0d1322] p-4">
+            <Label className="flex items-center gap-1.5 font-semibold text-sm text-slate-100">
+              <Link2 className="h-4 w-4 text-indigo-400" />
+              ตั้งค่า GAS API URL (Web App Endpoint)
+            </Label>
+            <p className="text-xs text-slate-400">
+              ใช้สำหรับเปลี่ยนลิงก์เชื่อมต่อกรณีที่มีการ Deploy Web App ใหม่บน Google Apps Script
+            </p>
+            <div className="flex flex-col sm:flex-row gap-2 pt-1">
+              <Input
+                type="url"
+                value={gasUrlInput}
+                onChange={(e) => setGasUrlInput(e.target.value)}
+                placeholder="https://script.google.com/macros/s/.../exec"
+                className="flex-1 text-xs font-mono"
+              />
+              <Button
+                size="sm"
+                onClick={() => {
+                  setGasUrl(gasUrlInput)
+                  toast.success("บันทึก GAS API URL เรียบร้อยแล้ว")
+                }}
+              >
+                บันทึก URL
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setGasUrlInput(DEFAULT_GAS_URL)
+                  setGasUrl(DEFAULT_GAS_URL)
+                  toast.info("คืนค่าเป็น URL เริ่มต้นแล้ว")
+                }}
+              >
+                <RotateCcw className="h-3.5 w-3.5" /> ค่าเริ่มต้น
               </Button>
             </div>
           </div>
