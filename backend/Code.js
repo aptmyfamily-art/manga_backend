@@ -3485,19 +3485,27 @@ function downloadKuaikanChapterToDrive(payload) {
       if (!imgUrl) continue;
       imgUrl = normalizeKuaikanImageUrl(imgUrl);
 
-      try {
-        const imgRes = UrlFetchApp.fetch(imgUrl, {
-          headers: { 'Referer': 'https://www.kuaikanmanhua.com/' },
-          muteHttpExceptions: true
-        });
-        const blob = imgRes.getBlob();
-        const ext = imgUrl.indexOf('.webp') !== -1 ? '.webp' : (imgUrl.indexOf('.png') !== -1 ? '.png' : '.jpg');
-        const filename = String(i + 1).padStart(3, '0') + ext;
-        blob.setName(filename);
-        targetFolder.createFile(blob);
-        downloadedCount++;
-      } catch (err) {
-        console.error('Image download error at ' + i + ':', err);
+      let downloaded = false;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const imgRes = UrlFetchApp.fetch(imgUrl, {
+            headers: { 'Referer': 'https://www.kuaikanmanhua.com/' },
+            muteHttpExceptions: true
+          });
+          if (imgRes.getResponseCode() === 200) {
+            const blob = imgRes.getBlob();
+            const ext = imgUrl.indexOf('.webp') !== -1 ? '.webp' : (imgUrl.indexOf('.png') !== -1 ? '.png' : '.jpg');
+            const filename = String(i + 1).padStart(3, '0') + ext;
+            blob.setName(filename);
+            targetFolder.createFile(blob);
+            downloadedCount++;
+            downloaded = true;
+            break;
+          }
+        } catch (err) {
+          if (attempt === 3) console.error('Image download error at ' + i + ' after 3 attempts:', err);
+          Utilities.sleep(500 * attempt);
+        }
       }
     }
 

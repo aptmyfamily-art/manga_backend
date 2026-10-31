@@ -59,27 +59,81 @@ function normalizeKuaikanImageUrl(url: string): string {
 /**
  * Helper โหลดรูปเข้า HTMLImageElement สำหรับนำไปวาดบน Canvas
  */
-function loadImageElement(url: string): Promise<HTMLImageElement> {
+/**
+ * Helper โหลดรูปเข้า HTMLImageElement พร้อมระบบ Auto-Retry อัจฉริยะ (สูงสุด 4 ครั้ง พร้อมหน่วงเวลาและ Cache-Busting)
+ */
+async function loadImageElement(url: string, standardWidth = 1280, maxRetries = 4): Promise<HTMLImageElement> {
   let targetUrl = url
   if (url.includes("c9wcdhdee")) {
     targetUrl = "https://tn1.kkmh.com/image/c855368/261028/c9wcdhdee.webp-t.w1280.jpg.h?sign=60c30f1c994da070ad33ba87e036a364&t=6ae5f8b2"
   }
-  return new Promise((resolve, reject) => {
-    const img = new Image()
-    img.crossOrigin = "anonymous"
-    img.referrerPolicy = "no-referrer"
-    img.onload = () => resolve(img)
-    img.onerror = () => {
-      // Retry once
-      const retry = new Image()
-      retry.crossOrigin = "anonymous"
-      retry.referrerPolicy = "no-referrer"
-      retry.onload = () => resolve(retry)
-      retry.onerror = () => reject(new Error(`โหลดภาพไม่สำเร็จ: ${targetUrl.substring(0, 45)}...`))
-      retry.src = targetUrl
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    // ป้องกัน Browser Error Caching ด้วยการเพิ่ม cache-buster เมื่อลองใหม่
+    const finalUrl =
+      attempt === 1
+        ? targetUrl
+        : `${targetUrl}${targetUrl.includes("?") ? "&" : "?"}_retry=${attempt}&_t=${Date.now()}`
+
+    try {
+      const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const image = new Image()
+        image.crossOrigin = "anonymous"
+        image.referrerPolicy = "no-referrer"
+
+        const timer = setTimeout(() => {
+          image.onload = null
+          image.onerror = null
+          reject(new Error(`หมดเวลาดาวน์โหลด (ครั้งที่ ${attempt})`))
+        }, 15000)
+
+        image.onload = () => {
+          clearTimeout(timer)
+          if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+            resolve(image)
+          } else {
+            reject(new Error("ขนาดภาพเป็น 0"))
+          }
+        }
+
+        image.onerror = () => {
+          clearTimeout(timer)
+          reject(new Error(`โหลดภาพไม่สำเร็จ (ครั้งที่ ${attempt})`))
+        }
+
+        image.src = finalUrl
+      })
+
+      return img
+    } catch (err: any) {
+      console.warn(`[loadImageElement] Retry ${attempt}/${maxRetries} failed:`, err.message, targetUrl)
+      if (attempt < maxRetries) {
+        // หน่วงเวลาแบบ Exponential Backoff (1s, 2s, 3s)
+        await new Promise((r) => setTimeout(r, attempt * 1000))
+      }
     }
-    img.src = targetUrl
+  }
+
+  // หากลองครบทุกครั้งแล้วยังโหลดไม่ได้ ให้สร้าง Placeholder Image ขนาดมาตรฐาน ป้องกัน Canvas พังยกชุด
+  console.error(`[loadImageElement] Image permanently failed after ${maxRetries} retries: ${targetUrl}`)
+  const canvas = document.createElement("canvas")
+  canvas.width = standardWidth
+  canvas.height = 1000
+  const ctx = canvas.getContext("2d")
+  if (ctx) {
+    ctx.fillStyle = "#0f172a"
+    ctx.fillRect(0, 0, standardWidth, 1000)
+    ctx.fillStyle = "#64748b"
+    ctx.font = "bold 20px sans-serif"
+    ctx.textAlign = "center"
+    ctx.fillText("ภาพนี้โหลดไม่สำเร็จหลังจาก Retry 4 ครั้ง", standardWidth / 2, 500)
+  }
+  const fallbackImg = new Image()
+  fallbackImg.src = canvas.toDataURL("image/webp")
+  await new Promise((res) => {
+    fallbackImg.onload = res
   })
+  return fallbackImg
 }
 
 export function KuaiKanLoginModal({
@@ -580,10 +634,10 @@ export function KuaiKanLoginModal({
           statusText: `กำลังโหลดและเย็บหน้า ${partNum}/${totalParts} (${sliceCount} ชิ้น)...`,
         })
 
-        // 2.1 โหลดภาพใน Part นี้
+        // 2.1 โหลดภาพใน Part นี้ (พร้อมระบบ Auto-Retry 4 ครั้ง)
         const partUrls = allUrls.slice(startIdx, endIdx)
         const loadedImages = await Promise.all(
-          partUrls.map((u) => loadImageElement(u))
+          partUrls.map((u) => loadImageElement(u, standardWidth))
         )
 
         // 2.2 ปรับสเกลภาพให้ความกว้างเท่ากับ standardWidth เสมอ (ขยายหน้าปกหรือหน้าที่ความกว้างต่างกัน)
@@ -647,24 +701,45 @@ export function KuaiKanLoginModal({
         })
 
         const isLast = partIdx === totalParts - 1
-        const res = await callGasApi<any>("UPLOAD_CHAPTER_STITCHED_PART", {
-          mangaName: testResult.thaiTitle || testResult.mangaName || "ข้าคือจอมวายร้ายผู้ยิ่งใหญ่",
-          chapter: testResult.title || "第366话",
-          partIndex: partNum,
-          totalParts,
-          fileName,
-          mimeType,
-          base64Data,
-          isLastPart: isLast,
-          clearFolder: partNum === 1,
-          mangaId: String(testResult.mangaId || "4"),
-        })
+        let res: any = null
 
-        if (res && res.error) {
-          if (res.error.includes("DriveApp") || res.error.includes("คุณไม่ได้รับอนุญาต") || res.error.includes("permission")) {
-            setDriveAuthError(res.error)
+        // Auto-Retry สูงสุด 3 ครั้งสำหรับอัปโหลดขึ้น Google Drive
+        for (let uploadAttempt = 1; uploadAttempt <= 3; uploadAttempt++) {
+          try {
+            res = await callGasApi<any>("UPLOAD_CHAPTER_STITCHED_PART", {
+              mangaName: testResult.thaiTitle || testResult.mangaName || "ข้าคือจอมวายร้ายผู้ยิ่งใหญ่",
+              chapter: testResult.title || "第366话",
+              partIndex: partNum,
+              totalParts,
+              fileName,
+              mimeType,
+              base64Data,
+              isLastPart: isLast,
+              clearFolder: partNum === 1,
+              mangaId: String(testResult.mangaId || "4"),
+            })
+
+            if (res && res.error) {
+              if (res.error.includes("DriveApp") || res.error.includes("คุณไม่ได้รับอนุญาต") || res.error.includes("permission")) {
+                setDriveAuthError(res.error)
+                throw new Error(res.error)
+              }
+              throw new Error(res.error)
+            }
+            break // สำเร็จ ออกจาก loop
+          } catch (uploadErr: any) {
+            console.warn(`[UPLOAD_CHAPTER_STITCHED_PART] Attempt ${uploadAttempt}/3 failed:`, uploadErr)
+            if (uploadAttempt === 3) throw uploadErr
+            setStitchProgress((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    statusText: `⚠️ อัปโหลด ${fileName} ขัดข้อง กำลังลองใหม่ (ครั้งที่ ${uploadAttempt + 1}/3)...`,
+                  }
+                : null
+            )
+            await new Promise((r) => setTimeout(r, uploadAttempt * 2000))
           }
-          throw new Error(res.error)
         }
 
         if (res && res.folderUrl) {
