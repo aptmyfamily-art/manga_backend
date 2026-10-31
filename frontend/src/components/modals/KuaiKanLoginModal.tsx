@@ -648,7 +648,7 @@ export function KuaiKanLoginModal({
 
         const isLast = partIdx === totalParts - 1
         const res = await callGasApi<any>("UPLOAD_CHAPTER_STITCHED_PART", {
-          mangaName: testResult.topicTitle || "我！天命大反派",
+          mangaName: testResult.thaiTitle || testResult.mangaName || "ข้าคือจอมวายร้ายผู้ยิ่งใหญ่",
           chapter: testResult.title || "第366话",
           partIndex: partNum,
           totalParts,
@@ -657,7 +657,7 @@ export function KuaiKanLoginModal({
           base64Data,
           isLastPart: isLast,
           clearFolder: partNum === 1,
-          mangaId: "1",
+          mangaId: String(testResult.mangaId || "4"),
         })
 
         if (res && res.error) {
@@ -1095,7 +1095,7 @@ export function KuaiKanLoginModal({
                       <FolderOpen className="h-3.5 w-3.5 text-indigo-400 shrink-0" />
                       <span className="text-slate-400">บันทึกลง:</span>
                       <span className="font-mono text-emerald-300 truncate">
-                        แปลจนเมื่อย / {testResult.topicTitle || "我！天命大反派"} / {testResult.title || "第366话"}
+                        แปลจนเมื่อย / {testResult.thaiTitle || testResult.mangaName || "ข้าคือจอมวายร้ายผู้ยิ่งใหญ่"} / {testResult.title || "第366话"}
                       </span>
                     </div>
                     <a
@@ -1187,7 +1187,7 @@ export function KuaiKanLoginModal({
                         เย็บและบันทึกลง Google Drive สำเร็จครบทั้ง {stitchProgress.totalParts} ส่วน!
                       </div>
                       <div className="text-[11px] text-slate-300">
-                        ไฟล์ถูกบันทึกไว้ในโฟลเดอร์ <b>แปลจนเมื่อย / {testResult.topicTitle || "我！天命大反派"} / {testResult.title || "第366话"}</b>
+                        ไฟล์ถูกบันทึกไว้ในโฟลเดอร์ <b>แปลจนเมื่อย / {testResult.thaiTitle || testResult.mangaName || "ข้าคือจอมวายร้ายผู้ยิ่งใหญ่"} / {testResult.title || "第366话"}</b>
                       </div>
                       {stitchProgress.folderUrl && (
                         <a

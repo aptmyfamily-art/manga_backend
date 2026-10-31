@@ -3196,9 +3196,16 @@ function testKuaikanLatestChapter(comicId, overrideCookie) {
       return normalizeKuaikanImageUrl(raw);
     });
 
+    const thaiInfo = getThaiMangaInfo(topicTitle || targetComicId);
+    const thaiMangaName = thaiInfo.manganame || 'ข้าคือจอมวายร้ายผู้ยิ่งใหญ่';
+    const mangaId = thaiInfo.mangaid || 4;
+
     return {
       success: true,
       comicId: targetComicId,
+      mangaId: mangaId,
+      mangaName: thaiMangaName,
+      thaiTitle: thaiMangaName,
       title: title || (session && session.test && session.test.title) || '第366话',
       topicTitle: topicTitle || (session && session.test && session.test.topicTitle) || '我！天命大反派',
       imagesCount: imagesCount,
@@ -3222,8 +3229,67 @@ function testKuaikanLatestChapter(comicId, overrideCookie) {
 const KUAIKAN_DRIVE_ROOT_FOLDER_ID = '1hA_5XjT1gLnzrAOFpT-COVfIbuSfVG6_';
 
 /**
+ * ค้นหาข้อมูลมังงะจากฐานข้อมูล Mangas โดยใช้ชื่อจีน, ID, หรือ URL
+ * คืนค่า { mangaid, manganame (ชื่อไทย), originalname (ชื่อจีน) }
+ */
+function getThaiMangaInfo(identifier) {
+  if (!identifier) {
+    return { mangaid: 4, manganame: 'ข้าคือจอมวายร้ายผู้ยิ่งใหญ่', originalname: '我！天命大反派' };
+  }
+  try {
+    const list = getMangaList();
+    const cleanId = String(identifier).trim().toLowerCase();
+    
+    // 1. ค้นหาจาก mangaid ตรงๆ
+    for (let i = 0; i < list.length; i++) {
+      const m = list[i];
+      if (String(m.mangaid) === cleanId) {
+        return { mangaid: m.mangaid, manganame: m.manganame, originalname: m.originalname || '' };
+      }
+    }
+
+    // 2. ค้นหาจาก originalname (ชื่อจีน เช่น 我！天命大反派)
+    for (let i = 0; i < list.length; i++) {
+      const m = list[i];
+      if (m.originalname) {
+        const orig = String(m.originalname).trim().toLowerCase();
+        if (orig.indexOf(cleanId) !== -1 || cleanId.indexOf(orig) !== -1) {
+          return { mangaid: m.mangaid, manganame: m.manganame, originalname: m.originalname };
+        }
+      }
+    }
+
+    // 3. ค้นหาจาก manganame (ชื่อไทย)
+    for (let i = 0; i < list.length; i++) {
+      const m = list[i];
+      if (m.manganame) {
+        const name = String(m.manganame).trim().toLowerCase();
+        if (name.indexOf(cleanId) !== -1 || cleanId.indexOf(name) !== -1) {
+          return { mangaid: m.mangaid, manganame: m.manganame, originalname: m.originalname || '' };
+        }
+      }
+    }
+
+    // 4. ค้นหาจาก originalurl หรือ slug
+    for (let i = 0; i < list.length; i++) {
+      const m = list[i];
+      if (m.originalurl && m.originalurl.toLowerCase().indexOf(cleanId) !== -1) {
+        return { mangaid: m.mangaid, manganame: m.manganame, originalname: m.originalname || '' };
+      }
+      if (m.slug && m.slug.toLowerCase().indexOf(cleanId) !== -1) {
+        return { mangaid: m.mangaid, manganame: m.manganame, originalname: m.originalname || '' };
+      }
+    }
+  } catch (e) {
+    console.error('getThaiMangaInfo error:', e);
+  }
+
+  return { mangaid: 4, manganame: 'ข้าคือจอมวายร้ายผู้ยิ่งใหญ่', originalname: String(identifier).trim() };
+}
+
+/**
  * ดึงหรือสร้างโครงสร้างโฟลเดอร์ใน Google Drive:
- * แปลจนเมื่อย (1hA_5XjT1gLnzrAOFpT-COVfIbuSfVG6_) / {ชื่อเรื่อง} / {เลขตอน}
+ * แปลจนเมื่อย (1hA_5XjT1gLnzrAOFpT-COVfIbuSfVG6_) / {ชื่อเรื่องภาษาไทย} / {เลขตอน}
  */
 function getOrCreateChapterFolder(mangaName, chapterName) {
   let rootFolder;
@@ -3239,8 +3305,10 @@ function getOrCreateChapterFolder(mangaName, chapterName) {
     }
   }
 
-  // 1. ซับโฟลเดอร์ชื่อเรื่อง (เช่น 我！天命大反派)
-  const cleanMangaName = (mangaName || '我！天命大反派').trim();
+  // 1. ซับโฟลเดอร์ชื่อเรื่องภาษาไทยจากฐานข้อมูล (เช่น ข้าคือจอมวายร้ายผู้ยิ่งใหญ่)
+  const thaiInfo = getThaiMangaInfo(mangaName);
+  const cleanMangaName = (thaiInfo.manganame || mangaName || 'ข้าคือจอมวายร้ายผู้ยิ่งใหญ่').trim();
+
   let mangaFolder;
   const mangaFolders = rootFolder.getFoldersByName(cleanMangaName);
   if (mangaFolders.hasNext()) {
@@ -3275,15 +3343,17 @@ function uploadChapterStitchedPart(payload) {
       return { error: 'ไม่มีข้อมูล base64Data' };
     }
 
-    const mangaName = payload.mangaName || '我！天命大反派';
+    const thaiInfo = getThaiMangaInfo(payload.mangaId || payload.mangaName || '我！天命大反派');
+    const thaiMangaName = thaiInfo.manganame || 'ข้าคือจอมวายร้ายผู้ยิ่งใหญ่';
+    const mangaId = payload.mangaId || thaiInfo.mangaid || 4;
     const chapter = payload.chapter || '第366话';
     const partIndex = payload.partIndex || 1;
     const totalParts = payload.totalParts || 1;
     const fileName = payload.fileName || ('Part_' + String(partIndex).padStart(2, '0') + '.webp');
     const mimeType = payload.mimeType || 'image/webp';
 
-    // 1. Get Destination Folder (แปลจนเมื่อย / {mangaName} / {chapter})
-    const targetFolder = getOrCreateChapterFolder(mangaName, chapter);
+    // 1. Get Destination Folder (แปลจนเมื่อย / {ชื่อไทย} / {chapter})
+    const targetFolder = getOrCreateChapterFolder(thaiMangaName, chapter);
     const folderUrl = targetFolder.getUrl();
 
     // 2. Decode base64
