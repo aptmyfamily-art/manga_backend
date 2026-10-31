@@ -14,7 +14,7 @@ PASSCODE = "10211032"
 COMIC_ID = 855368
 MANGA_NAME = "我！天命大反派"
 CHAPTER_NAME = "第366话"
-PAGES_PER_PART = 20
+TARGET_TOTAL_PAGES = 20
 
 def call_gas(action, payload=None, retries=3):
     body = {
@@ -49,7 +49,7 @@ def download_image(url, retries=3):
 
 def main():
     start_from_part = int(sys.argv[1]) if len(sys.argv) > 1 else 1
-    print(f"1. ดึงรายการภาพทั้งหมดของ Chapter {CHAPTER_NAME} จาก GAS (เริ่มจาก Part {start_from_part})...")
+    print(f"1. ดึงรายการภาพทั้งหมดของ Chapter {CHAPTER_NAME} จาก GAS...")
     res = call_gas("TEST_KUAIKAN_CHAPTER", {"comicId": COMIC_ID})
     if not res.get("status") == "success" or not res.get("data"):
         print("Error fetching chapter:", res)
@@ -57,36 +57,37 @@ def main():
 
     data = res["data"]
     urls = data.get("allImages") or data.get("sampleImages") or []
-    print(f"✓ พบทั้งหมด {len(urls)} ภาพ (เรื่อง: {data.get('topicTitle')}, ตอน: {data.get('title')})")
+    total_images = len(urls)
+    print(f"✓ พบทั้งหมด {total_images} ชิ้นภาพ (เรื่อง: {data.get('topicTitle')}, ตอน: {data.get('title')})")
 
     if not urls:
         print("No images found.")
         return
 
     # 2. วัดขนาดความกว้างมาตรฐานจากหน้ากลางๆ (หน้า 30 หรือกึ่งกลาง)
-    sample_idx = 29 if len(urls) >= 30 else len(urls) // 2
+    sample_idx = 29 if total_images >= 30 else total_images // 2
     print(f"2. โหลดหน้าตัวอย่าง #{sample_idx + 1} เพื่อกำหนดความกว้างมาตรฐาน...")
     sample_bytes = download_image(urls[sample_idx])
     sample_img = Image.open(io.BytesIO(sample_bytes))
     standard_width = sample_img.width
     print(f"✓ ความกว้างมาตรฐานคือ {standard_width}px (ขนาดหน้า #{sample_idx + 1}: {sample_img.size})")
 
-    total_pages = len(urls)
-    total_parts = math.ceil(total_pages / PAGES_PER_PART)
-    print(f"3. เริ่มต้นกระบวนการเย็บ 20 หน้า/ไฟล์ ทั้งหมด {total_parts} ส่วน...")
+    # 3. คำนวณแบ่งจำนวนภาพทั้งหมดออกมาเป็น 20 หน้าพอดิบพอดี
+    total_parts = min(TARGET_TOTAL_PAGES, total_images)
+    print(f"3. คำนวณแบ่งภาพทั้งหมด {total_images} ชิ้น ให้รวมเป็น {total_parts} หน้า...")
 
     for part_idx in range(total_parts):
         part_num = part_idx + 1
-        start_idx = part_idx * PAGES_PER_PART
-        end_idx = min((part_idx + 1) * PAGES_PER_PART, total_pages)
-        part_file_name = f"Part_{part_num:02d}.jpg"
+        start_idx = round(part_idx * total_images / total_parts)
+        end_idx = round((part_idx + 1) * total_images / total_parts)
+        slice_count = end_idx - start_idx
         part_urls = urls[start_idx:end_idx]
 
         if part_num < start_from_part:
-            print(f"   [ข้าม] {part_file_name} ได้รับการอัปโหลดไปแล้ว")
+            print(f"   [ข้าม] Part {part_num:02d} ได้รับการอัปโหลดไปแล้ว")
             continue
 
-        print(f"\n--- กำลังทำ [{part_num}/{total_parts}] {part_file_name} (หน้า {start_idx + 1} ถึง {end_idx}) ---")
+        print(f"\n--- กำลังทำ [{part_num}/{total_parts}] Part_{part_num:02d} (ชิ้นที่ {start_idx + 1} ถึง {end_idx}, รวม {slice_count} ชิ้น) ---")
 
         processed_images = []
         total_height = 0
@@ -100,7 +101,7 @@ def main():
                 scale = standard_width / pil_img.width
                 scaled_h = round(pil_img.height * scale)
                 pil_img = pil_img.resize((standard_width, scaled_h), Image.Resampling.LANCZOS)
-                print(f"   [หน้า {start_idx + i + 1}] ปรับสเกลเป็น {standard_width}x{scaled_h}")
+                print(f"   [ชิ้น {start_idx + i + 1}] ปรับสเกลเป็น {standard_width}x{scaled_h}")
 
             processed_images.append(pil_img)
             total_height += pil_img.height
@@ -114,16 +115,25 @@ def main():
             strip_canvas.paste(p_img, (0, current_y))
             current_y += p_img.height
 
-        # บันทึกเป็น JPEG (คุณภาพ 85% คมชัดระดับ HD ไฟล์ขนาดกะทัดรัด ~2MB อัปโหลดเร็วและปลอดภัย)
+        # เลือกระหว่าง WebP หรือ JPEG ตามความสูง (WebP limit: 16,383px)
+        use_jpeg = total_height > 16000
+        ext = "jpg" if use_jpeg else "webp"
+        mime_type = "image/jpeg" if use_jpeg else "image/webp"
+        part_file_name = f"Part_{part_num:02d}.{ext}"
+
         img_buf = io.BytesIO()
-        strip_canvas.save(img_buf, format="JPEG", quality=85, optimize=True)
+        if use_jpeg:
+            strip_canvas.save(img_buf, format="JPEG", quality=88, optimize=True)
+        else:
+            strip_canvas.save(img_buf, format="WEBP", quality=92, method=4)
+        
         img_bytes = img_buf.getvalue()
         file_size_kb = len(img_bytes) / 1024
         print(f"   สร้างไฟล์ {part_file_name} ขนาด {file_size_kb:.1f} KB")
 
         # แปลงเป็น Base64
         b64_str = base64.b64encode(img_bytes).decode('utf-8')
-        data_url = "data:image/jpeg;base64," + b64_str
+        data_url = f"data:{mime_type};base64," + b64_str
 
         # อัปโหลดเข้า Google Drive: แปลจนเมื่อย / 我！天命大反派 / 第366话
         is_last = (part_idx == total_parts - 1)
@@ -135,9 +145,10 @@ def main():
             "partIndex": part_num,
             "totalParts": total_parts,
             "fileName": part_file_name,
-            "mimeType": "image/jpeg",
+            "mimeType": mime_type,
             "base64Data": data_url,
             "isLastPart": is_last,
+            "clearFolder": (part_num == 1),
             "mangaId": "1"
         })
 
@@ -145,7 +156,7 @@ def main():
             up_data = upload_res["data"]
             print(f"   ✓ อัปโหลด {part_file_name} สำเร็จ! Drive Link: {up_data.get('fileUrl')}")
             if is_last:
-                print(f"\n🎉 อัปโหลดครบทั้ง {total_parts} ส่วนแล้ว!")
+                print(f"\n🎉 อัปโหลดครบทั้ง {total_parts} หน้าเรียบร้อยแล้ว!")
                 print(f"📂 Folder Google Drive: {up_data.get('folderUrl')}")
         else:
             print(f"   ❌ อัปโหลดผิดพลาด: {upload_res}")

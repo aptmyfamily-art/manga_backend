@@ -3288,12 +3288,21 @@ function uploadChapterStitchedPart(payload) {
     const decodedBytes = Utilities.base64Decode(rawBase64);
     const blob = Utilities.newBlob(decodedBytes, mimeType, fileName);
 
-    // 3. Remove existing file with same name if any
-    const existing = targetFolder.getFilesByName(fileName);
-    while (existing.hasNext()) {
-      try {
-        existing.next().setTrashed(true);
-      } catch (trashErr) {}
+    // 3. ล้างไฟล์เก่าออก หากเป็นการเริ่มต้นอัปโหลดส่วนแรก (partIndex === 1 หรือ clearFolder: true)
+    if (payload.clearFolder || partIndex === 1) {
+      const allFiles = targetFolder.getFiles();
+      while (allFiles.hasNext()) {
+        try {
+          allFiles.next().setTrashed(true);
+        } catch (trashErr) {}
+      }
+    } else {
+      const existing = targetFolder.getFilesByName(fileName);
+      while (existing.hasNext()) {
+        try {
+          existing.next().setTrashed(true);
+        } catch (trashErr) {}
+      }
     }
 
     // 4. Save file
@@ -3309,7 +3318,7 @@ function uploadChapterStitchedPart(payload) {
           chapter: chapter.replace(/[^\d.]/g, '') || '366',
           uploadstatus: 'Done',
           worklink: folderUrl,
-          note: 'KuaiKan VIP Stitched (20 หน้า/ไฟล์) ลง แปลจนเมื่อย'
+          note: 'KuaiKan VIP Concat รวมเป็น ' + totalParts + ' หน้า ลง แปลจนเมื่อย'
         });
       } catch (qe) {
         console.warn('Auto addQueue error:', qe);

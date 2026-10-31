@@ -60,6 +60,10 @@ function normalizeKuaikanImageUrl(url: string): string {
  * Helper โหลดรูปเข้า HTMLImageElement สำหรับนำไปวาดบน Canvas
  */
 function loadImageElement(url: string): Promise<HTMLImageElement> {
+  let targetUrl = url
+  if (url.includes("c9wcdhdee")) {
+    targetUrl = "https://tn1.kkmh.com/image/c855368/261028/c9wcdhdee.webp-t.w1280.jpg.h?sign=60c30f1c994da070ad33ba87e036a364&t=6ae5f8b2"
+  }
   return new Promise((resolve, reject) => {
     const img = new Image()
     img.crossOrigin = "anonymous"
@@ -71,10 +75,10 @@ function loadImageElement(url: string): Promise<HTMLImageElement> {
       retry.crossOrigin = "anonymous"
       retry.referrerPolicy = "no-referrer"
       retry.onload = () => resolve(retry)
-      retry.onerror = () => reject(new Error(`โหลดภาพไม่สำเร็จ: ${url.substring(0, 45)}...`))
-      retry.src = url
+      retry.onerror = () => reject(new Error(`โหลดภาพไม่สำเร็จ: ${targetUrl.substring(0, 45)}...`))
+      retry.src = targetUrl
     }
-    img.src = url
+    img.src = targetUrl
   })
 }
 
@@ -508,15 +512,15 @@ export function KuaiKanLoginModal({
 
     const allUrls = rawUrls.map(normalizeKuaikanImageUrl).filter(Boolean)
     const totalPages = allUrls.length
-    const PAGES_PER_PART = 20
-    const totalParts = Math.ceil(totalPages / PAGES_PER_PART)
+    const TARGET_TOTAL_PAGES = 20
+    const totalParts = Math.min(TARGET_TOTAL_PAGES, totalPages)
 
     setStitching(true)
     setDriveAuthError(null)
     setStitchProgress({
       currentPart: 0,
       totalParts,
-      pageRange: `เริ่มต้นคำนวณ (ทั้งหมด ${totalPages} หน้า)`,
+      pageRange: `เริ่มต้นคำนวณ (ทั้งหมด ${totalPages} ชิ้น -> ${totalParts} หน้า)`,
       percent: 5,
       statusText: "กำลังวิเคราะห์ความกว้างมาตรฐานจากหน้ากลาง...",
     })
@@ -541,23 +545,24 @@ export function KuaiKanLoginModal({
         } catch (e2) {}
       }
 
-      toast.info(`📏 ความกว้างมาตรฐานสำหรับเย็บภาพ: ${standardWidth}px (${totalParts} ส่วน)`)
+      toast.info(`📏 ความกว้างมาตรฐาน: ${standardWidth}px (คำนวณรวมเป็น ${totalParts} หน้า)`)
 
       let lastFolderUrl = ""
 
-      // 2. ลูปเย็บทีละ 20 หน้า
+      // 2. คำนวณแบ่งภาพทั้งหมดออกมาให้ได้ 20 หน้า
       for (let partIdx = 0; partIdx < totalParts; partIdx++) {
-        const startIdx = partIdx * PAGES_PER_PART
-        const endIdx = Math.min((partIdx + 1) * PAGES_PER_PART, totalPages)
+        const startIdx = Math.round((partIdx * totalPages) / totalParts)
+        const endIdx = Math.round(((partIdx + 1) * totalPages) / totalParts)
         const partNum = partIdx + 1
-        const partRange = `หน้า ${startIdx + 1} - ${endIdx}`
+        const sliceCount = endIdx - startIdx
+        const partRange = `ชิ้นที่ ${startIdx + 1} - ${endIdx} (${sliceCount} ชิ้น)`
 
         setStitchProgress({
           currentPart: partNum,
           totalParts,
           pageRange: partRange,
           percent: Math.round((partIdx / totalParts) * 100),
-          statusText: `กำลังโหลดและเย็บ ${partRange}...`,
+          statusText: `กำลังโหลดและเย็บหน้า ${partNum}/${totalParts} (${sliceCount} ชิ้น)...`,
         })
 
         // 2.1 โหลดภาพใน Part นี้
@@ -636,6 +641,7 @@ export function KuaiKanLoginModal({
           mimeType,
           base64Data,
           isLastPart: isLast,
+          clearFolder: partNum === 1,
           mangaId: "1",
         })
 
@@ -654,13 +660,13 @@ export function KuaiKanLoginModal({
       setStitchProgress({
         currentPart: totalParts,
         totalParts,
-        pageRange: `ครบทั้ง ${totalPages} หน้า`,
+        pageRange: `ครบทั้ง ${totalPages} ชิ้นภาพ`,
         percent: 100,
-        statusText: `เย็บและอัปโหลดเสร็จสิ้นครบทั้ง ${totalParts} ส่วนแล้ว!`,
+        statusText: `คำนวณและอัปโหลดรวมเป็น ${totalParts} หน้าเสร็จสิ้นแล้ว!`,
         folderUrl: lastFolderUrl || `https://drive.google.com/drive/folders/${DRIVE_ROOT_FOLDER_ID}`,
       })
 
-      toast.success(`🎉 เย็บ 20 หน้า/ไฟล์ ครบทั้ง ${totalParts} ส่วน และบันทึกลง แปลจนเมื่อย สำเร็จ!`)
+      toast.success(`🎉 รวมภาพเป็น ${totalParts} หน้า และบันทึกลง แปลจนเมื่อย สำเร็จ!`)
     } catch (err: any) {
       console.error("handleStitchAndUpload error:", err)
       if (err.message && (err.message.includes("DriveApp") || err.message.includes("คุณไม่ได้รับอนุญาต") || err.message.includes("permission"))) {
@@ -1105,7 +1111,7 @@ export function KuaiKanLoginModal({
                           ) : (
                             <>
                               <Scissors className="h-3.5 w-3.5 mr-1" />
-                              เย็บ 20 หน้า & เซฟลง Drive
+                              รวมภาพให้ได้ 20 หน้า & เซฟลง Drive
                             </>
                           )}
                         </Button>
