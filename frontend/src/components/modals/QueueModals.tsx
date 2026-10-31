@@ -25,6 +25,7 @@ interface AddQueueModalProps {
   teamList: any[]
   onOpenAddManga: () => void
   preselectedMangaId?: string
+  preselectedChapter?: string
   onSuccess: (queue: any[], manga?: any[]) => void
 }
 
@@ -35,6 +36,7 @@ export function AddQueueModal({
   teamList,
   onOpenAddManga,
   preselectedMangaId,
+  preselectedChapter,
   onSuccess,
 }: AddQueueModalProps) {
   const [mangaId, setMangaId] = React.useState("")
@@ -52,21 +54,23 @@ export function AddQueueModal({
   const [submitting, setSubmitting] = React.useState(false)
 
   React.useEffect(() => {
-    if (open && !preselectedMangaId) {
-      setMangaId("")
-      setChapter("")
-      setCostPerChapter(0)
-      setUploaderName("")
-      setRawLinkInput("")
-      setExtractorName("")
-      setExtractLinkInput("")
-      setTranslatorName("")
-      setTypesetterName("")
-      setPublisherName("")
-      setWorkLink("")
-      setNote("")
+    if (open) {
+      if (!preselectedMangaId) {
+        setMangaId("")
+        setCostPerChapter(0)
+        setUploaderName("")
+        setRawLinkInput("")
+        setExtractorName("")
+        setExtractLinkInput("")
+        setTranslatorName("")
+        setTypesetterName("")
+        setPublisherName("")
+        setWorkLink("")
+        setNote("")
+      }
+      setChapter(preselectedChapter || "")
     }
-  }, [open, preselectedMangaId])
+  }, [open, preselectedMangaId, preselectedChapter])
 
   React.useEffect(() => {
     if (preselectedMangaId) {

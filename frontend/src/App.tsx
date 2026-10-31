@@ -10,6 +10,7 @@ import { PasscodeGate } from "@/components/views/PasscodeGate"
 import { DashboardView } from "@/components/views/DashboardView"
 import { QueueView } from "@/components/views/QueueView"
 import { ExpensesView } from "@/components/views/ExpensesView"
+import { RawTrackerView } from "@/components/views/RawTrackerView"
 import { TeamView } from "@/components/views/TeamView"
 import { FinancialsView } from "@/components/views/FinancialsView"
 import { BudgetView } from "@/components/views/BudgetView"
@@ -43,11 +44,13 @@ import {
   RefreshCw,
   BookOpen,
   Lock,
+  Radio,
 } from "lucide-react"
 
 type ViewKey =
   | "dashboard"
   | "queue"
+  | "tracker"
   | "expenses"
   | "team"
   | "financials"
@@ -59,6 +62,7 @@ function getViewFromLocation(): ViewKey {
   const validViews: ViewKey[] = [
     "dashboard",
     "queue",
+    "tracker",
     "expenses",
     "team",
     "financials",
@@ -113,6 +117,8 @@ export default function App() {
   const [editingManga, setEditingManga] = React.useState<any | null>(null)
   const [returnToAddQueue, setReturnToAddQueue] = React.useState(false)
   const [preselectedQueueMangaId, setPreselectedQueueMangaId] =
+    React.useState<string>("")
+  const [preselectedQueueChapter, setPreselectedQueueChapter] =
     React.useState<string>("")
 
   const [addQueueOpen, setAddQueueOpen] = React.useState(false)
@@ -324,6 +330,7 @@ export default function App() {
   const navItems: Array<{ id: ViewKey; label: string; icon: any }> = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
     { id: "queue", label: "จัดการคิวงาน", icon: ClipboardList },
+    { id: "tracker", label: "ติดตามต้นฉบับ", icon: Radio },
     { id: "expenses", label: "สรุปรายจ่ายรายเดือน", icon: Receipt },
     { id: "team", label: "จัดการทีมงาน", icon: Users },
     { id: "financials", label: "รายงานกำไร-ขาดทุน", icon: TrendingUp },
@@ -483,6 +490,7 @@ export default function App() {
               onClearInitialSearch={() => setQueueSearchTerm("")}
               onOpenAddQueue={() => {
                 setPreselectedQueueMangaId("")
+                setPreselectedQueueChapter("")
                 setAddQueueOpen(true)
               }}
               onOpenUpdateQueue={(q) => {
@@ -490,6 +498,17 @@ export default function App() {
                 setUpdateQueueOpen(true)
               }}
               onQueueChange={updateQueueCache}
+            />
+          )}
+
+          {activeView === "tracker" && (
+            <RawTrackerView
+              mangaList={mangaList}
+              onOpenAddQueueWithManga={(mangaId, nextChap) => {
+                setPreselectedQueueMangaId(mangaId)
+                setPreselectedQueueChapter(nextChap || "")
+                setAddQueueOpen(true)
+              }}
             />
           )}
 
@@ -575,10 +594,14 @@ export default function App() {
       {/* Global Add Queue Modal */}
       <AddQueueModal
         open={addQueueOpen}
-        onClose={() => setAddQueueOpen(false)}
+        onClose={() => {
+          setAddQueueOpen(false)
+          setPreselectedQueueChapter("")
+        }}
         mangaList={mangaList}
         teamList={teamList}
         preselectedMangaId={preselectedQueueMangaId}
+        preselectedChapter={preselectedQueueChapter}
         onOpenAddManga={() => {
           setAddQueueOpen(false)
           setEditingManga(null)

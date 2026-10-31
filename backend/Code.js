@@ -12,6 +12,7 @@ const BUDGET_TRANSACTION_SHEET_NAME = 'BudgetTransactions';
 const MANGA_SALES_SHEET_NAME = 'MangaSales';
 const WEBSITE_SHEET_NAME = 'Websites';
 const ACCESS_PASSCODE = '720102';
+const RAW_TRACKER_SHEET_NAME = 'RawTracker';
 
 // --- TELEGRAM CONFIGURATION ---
 const TELEGRAM_BOT_TOKEN = '7836927758:AAHpsoCToMUxoeAzo5UMtMum3Ix5rIO_VOc';
@@ -252,6 +253,32 @@ function doPost(e) {
       case 'PROCESS_AUTO_QUEUE':
         processAutoQueue();
         result = { message: 'รันระบบคิวงานอัตโนมัติเรียบร้อยแล้ว', queue: getWorkQueue(true) };
+        break;
+
+      // --- RAW TRACKER (ต้นฉบับ UPDATE) ---
+      case 'GET_RAW_TRACKER_LIST':
+        result = getRawTrackerList();
+        break;
+      case 'ADD_RAW_TRACKER':
+        result = addRawTracker(payload);
+        break;
+      case 'UPDATE_RAW_TRACKER':
+        result = updateRawTracker(payload.id, payload.data);
+        break;
+      case 'DELETE_RAW_TRACKER':
+        result = deleteRawTracker(payload.id);
+        break;
+      case 'SCRAPE_RAW_URL':
+        result = scrapeRawUrl(payload.url, payload.pattern);
+        break;
+      case 'CHECK_ALL_RAW_TRACKERS':
+        result = checkAllRawTrackers(Boolean(payload.notifyTelegram));
+        break;
+      case 'IMPORT_FROM_MANGA_LIST':
+        result = importTrackersFromMangaList();
+        break;
+      case 'SETUP_HOURLY_TRACKER_TRIGGER':
+        result = setupHourlyTrackerTrigger();
         break;
 
       default:
@@ -507,6 +534,13 @@ function getSheet(name = SHEET_NAME) {
         ['Other']
       ];
       sheet.getRange(2, 1, defaults.length, 1).setValues(defaults);
+    } else if (name === RAW_TRACKER_SHEET_NAME) {
+      const headers = [
+        'TrackerID', 'MangaID', 'MangaName', 'Url', 'Pattern',
+        'LastRawText', 'LastRawCount', 'Status', 'LastChecked', 'UpdatedAt', 'AutoCheck'
+      ];
+      sheet.appendRow(headers);
+      sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold').setBackground('#ec4899').setFontColor('#ffffff');
     }
     ensureSheetHeaders(sheet, name);
   }
@@ -2194,4 +2228,409 @@ function setTelegramWebhook() {
   const response = UrlFetchApp.fetch(url);
   Logger.log(response.getContentText());
   return response.getContentText();
+}
+
+// ==========================================
+// RAW TRACKER & WEBSCRAPING MODULE
+// ==========================================
+
+function getRawTrackerList() {
+  try {
+    const sheet = getSheet(RAW_TRACKER_SHEET_NAME);
+    const data = sheet.getDataRange().getValues();
+    
+    // Auto import if empty
+    if (data.length <= 1) {
+      return importTrackersFromMangaList();
+    }
+
+    const headers = data[0].map(h => h.toString().toLowerCase().trim());
+    const mangaList = getMangaList();
+    const mangaMap = {};
+    mangaList.forEach(m => {
+      mangaMap[String(m.mangaid)] = m;
+    });
+
+    const results = [];
+    for (let i = 1; i < data.length; i++) {
+      const row = data[i];
+      const obj = {};
+      for (let c = 0; c < headers.length; c++) {
+        let val = row[c];
+        if (val instanceof Date) val = val.toISOString();
+        obj[headers[c]] = val;
+      }
+      const manga = mangaMap[String(obj.mangaid)];
+      obj.currentChapter = manga ? (manga.lastchapter || '0') : '0';
+      if (!obj.manganame && manga) obj.manganame = manga.manganame;
+      results.push(obj);
+    }
+    return results;
+  } catch (err) {
+    console.error('getRawTrackerList Error:', err);
+    return [];
+  }
+}
+
+function scrapeRawUrl(url, pattern) {
+  if (!url || typeof url !== 'string' || !url.trim().startsWith('http')) {
+    return { success: false, error: 'URL ไม่ถูกต้อง' };
+  }
+
+  try {
+    const cleanUrl = url.trim();
+    const options = {
+      method: 'get',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'zh-CN,zh;q=0.9,th;q=0.8,en;q=0.7',
+      },
+      muteHttpExceptions: true,
+      followRedirects: true
+    };
+
+    const response = UrlFetchApp.fetch(cleanUrl, options);
+    const code = response.getResponseCode();
+    if (code !== 200) {
+      return { success: false, error: 'HTTP Code: ' + code };
+    }
+
+    const html = response.getContentText('UTF-8') || response.getContentText();
+
+    let matchedText = '';
+    let chapterCount = 0;
+
+    // 1. If custom regex provided
+    if (pattern && pattern.trim()) {
+      try {
+        const regex = new RegExp(pattern.trim());
+        const match = html.match(regex);
+        if (match) {
+          matchedText = match[0];
+          if (match[1]) {
+            const num = parseFloat(match[1].replace(/,/g, ''));
+            if (!isNaN(num)) chapterCount = num;
+          }
+        }
+      } catch (e) {
+        console.error('Custom regex error:', e);
+      }
+    }
+
+    // 2. Kuaikanmanhua default pattern: 共377个内容
+    if (!matchedText) {
+      const matchKuaikan = html.match(/共\s*(\d+)\s*个内容/);
+      if (matchKuaikan) {
+        matchedText = matchKuaikan[0];
+        chapterCount = parseInt(matchKuaikan[1], 10);
+      }
+    }
+
+    // 3. QQ Comic pattern: 第...话 or 更新至...话
+    if (!matchedText) {
+      const matchQq = html.match(/更新至\s*(\d+)\s*话/) || html.match(/共\s*(\d+)\s*话/);
+      if (matchQq) {
+        matchedText = matchQq[0];
+        chapterCount = parseInt(matchQq[1], 10);
+      } else {
+        const allMatches = html.match(/第\s*(\d+)\s*话/g);
+        if (allMatches && allMatches.length > 0) {
+          let maxNum = 0;
+          allMatches.forEach(m => {
+            const n = parseInt(m.replace(/\D/g, ''), 10);
+            if (!isNaN(n) && n > maxNum) maxNum = n;
+          });
+          if (maxNum > 0) {
+            matchedText = '第' + maxNum + '话';
+            chapterCount = maxNum;
+          }
+        }
+      }
+    }
+
+    // 4. Other common patterns
+    if (!matchedText) {
+      const generic = html.match(/(?:更新至|連載至|连载至|Chapter|Ch\.)\s*(\d+)/i);
+      if (generic) {
+        matchedText = generic[0];
+        chapterCount = parseInt(generic[1], 10);
+      }
+    }
+
+    if (!matchedText) {
+      return {
+        success: false,
+        error: 'ไม่พบข้อความจำนวนตอน (เช่น 共...个内容) ในหน้าเว็บนี้'
+      };
+    }
+
+    return {
+      success: true,
+      rawText: matchedText,
+      chapterCount: chapterCount,
+      url: cleanUrl,
+      timestamp: new Date().toISOString()
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: 'ดึงข้อมูลไม่สำเร็จ: ' + err.toString()
+    };
+  }
+}
+
+function addRawTracker(item) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(30000);
+    const sheet = getSheet(RAW_TRACKER_SHEET_NAME);
+    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(h => h.toString().toLowerCase().trim());
+
+    const id = 'TRK' + new Date().getTime();
+    const now = new Date();
+    
+    // Test scrape initial
+    let initialText = '';
+    let initialCount = 0;
+    let initialStatus = 'กำลังรอตรวจสอบ';
+    if (item.url) {
+      const sc = scrapeRawUrl(item.url, item.pattern);
+      if (sc.success) {
+        initialText = sc.rawText;
+        initialCount = sc.chapterCount;
+        initialStatus = 'เป็นปัจจุบัน';
+      }
+    }
+
+    const newRow = headers.map(header => {
+      if (header === 'trackerid') return id;
+      if (header === 'mangaid') return item.mangaid || '';
+      if (header === 'manganame') return item.manganame || '';
+      if (header === 'url') return item.url || '';
+      if (header === 'pattern') return item.pattern || '';
+      if (header === 'lastrawtext') return initialText;
+      if (header === 'lastrawcount') return initialCount;
+      if (header === 'status') return initialStatus;
+      if (header === 'lastchecked') return now;
+      if (header === 'updatedat') return now;
+      if (header === 'autocheck') return item.autocheck !== undefined ? item.autocheck : true;
+      return '';
+    });
+
+    sheet.appendRow(newRow);
+    return getRawTrackerList();
+  } catch (err) {
+    return { error: 'Add Tracker Failed: ' + err.toString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function updateRawTracker(trackerId, updateData) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(30000);
+    const sheet = getSheet(RAW_TRACKER_SHEET_NAME);
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0].map(h => h.toString().toLowerCase().trim());
+    const idCol = headers.indexOf('trackerid');
+
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][idCol].toString() === trackerId.toString()) {
+        const rowNum = i + 1;
+        Object.keys(updateData).forEach(key => {
+          const colIndex = headers.indexOf(key.toLowerCase());
+          if (colIndex !== -1) {
+            sheet.getRange(rowNum, colIndex + 1).setValue(updateData[key]);
+          }
+        });
+        break;
+      }
+    }
+    return getRawTrackerList();
+  } catch (err) {
+    return { error: 'Update Tracker Failed: ' + err.toString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function deleteRawTracker(trackerId) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(30000);
+    const sheet = getSheet(RAW_TRACKER_SHEET_NAME);
+    const data = sheet.getDataRange().getValues();
+    const idCol = data[0].map(h => h.toString().toLowerCase().trim()).indexOf('trackerid');
+
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][idCol].toString() === trackerId.toString()) {
+        sheet.deleteRow(i + 1);
+        break;
+      }
+    }
+    return getRawTrackerList();
+  } catch (err) {
+    return { error: 'Delete Tracker Failed: ' + err.toString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function importTrackersFromMangaList() {
+  const mangaList = getMangaList();
+  const sheet = getSheet(RAW_TRACKER_SHEET_NAME);
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0].map(h => h.toString().toLowerCase().trim());
+  const existingMangaIds = new Set();
+  
+  if (data.length > 1) {
+    const mIdCol = headers.indexOf('mangaid');
+    for (let i = 1; i < data.length; i++) {
+      existingMangaIds.add(String(data[i][mIdCol]));
+    }
+  }
+
+  const rowsToAdd = [];
+  const now = new Date();
+  mangaList.forEach(m => {
+    if (m.originalurl && m.originalurl.trim().startsWith('http') && !existingMangaIds.has(String(m.mangaid))) {
+      const id = 'TRK' + new Date().getTime() + '_' + m.mangaid;
+      const row = headers.map(header => {
+        if (header === 'trackerid') return id;
+        if (header === 'mangaid') return m.mangaid;
+        if (header === 'manganame') return m.manganame;
+        if (header === 'url') return m.originalurl.trim();
+        if (header === 'pattern') return '';
+        if (header === 'lastrawtext') return '';
+        if (header === 'lastrawcount') return 0;
+        if (header === 'status') return 'รอตรวจสอบครั้งแรก';
+        if (header === 'lastchecked') return now;
+        if (header === 'updatedat') return now;
+        if (header === 'autocheck') return true;
+        return '';
+      });
+      rowsToAdd.push(row);
+      existingMangaIds.add(String(m.mangaid));
+    }
+  });
+
+  if (rowsToAdd.length > 0) {
+    sheet.getRange(sheet.getLastRow() + 1, 1, rowsToAdd.length, headers.length).setValues(rowsToAdd);
+  }
+
+  return getRawTrackerList();
+}
+
+function checkAllRawTrackers(notifyTelegram = false) {
+  const sheet = getSheet(RAW_TRACKER_SHEET_NAME);
+  const data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return { checked: 0, newUpdates: [], list: [] };
+
+  const headers = data[0].map(h => h.toString().toLowerCase().trim());
+  const idCol = headers.indexOf('trackerid') + 1;
+  const nameCol = headers.indexOf('manganame') + 1;
+  const urlCol = headers.indexOf('url') + 1;
+  const patternCol = headers.indexOf('pattern') + 1;
+  const lastTextCol = headers.indexOf('lastrawtext') + 1;
+  const lastCountCol = headers.indexOf('lastrawcount') + 1;
+  const statusCol = headers.indexOf('status') + 1;
+  const lastCheckedCol = headers.indexOf('lastchecked') + 1;
+  const updatedAtCol = headers.indexOf('updatedat') + 1;
+  const autoCheckCol = headers.indexOf('autocheck') + 1;
+
+  const newUpdates = [];
+  const now = new Date();
+
+  for (let i = 1; i < data.length; i++) {
+    const rowNum = i + 1;
+    const trackerId = data[i][idCol - 1];
+    const mangaName = data[i][nameCol - 1];
+    const url = data[i][urlCol - 1];
+    const pattern = patternCol > 0 ? data[i][patternCol - 1] : '';
+    const oldText = lastTextCol > 0 ? String(data[i][lastTextCol - 1] || '').trim() : '';
+    const oldCount = lastCountCol > 0 ? (parseFloat(data[i][lastCountCol - 1]) || 0) : 0;
+    const autoCheck = autoCheckCol > 0 ? String(data[i][autoCheckCol - 1]).toLowerCase() !== 'false' : true;
+
+    if (!autoCheck || !url || !String(url).trim().startsWith('http')) continue;
+
+    const res = scrapeRawUrl(url, pattern);
+    if (res.success) {
+      const newText = res.rawText;
+      const newCount = res.chapterCount;
+      const isChanged = (oldText !== '' && oldText !== newText) || (oldCount > 0 && newCount > oldCount);
+
+      let status = 'เป็นปัจจุบัน';
+      if (isChanged) {
+        const diff = newCount > oldCount && oldCount > 0 ? (newCount - oldCount) : 1;
+        status = 'มีตอนใหม่ (+' + diff + ' ตอน)';
+        newUpdates.push({
+          mangaName: mangaName,
+          oldText: oldText,
+          newText: newText,
+          url: url,
+          newCount: newCount
+        });
+        if (updatedAtCol > 0) sheet.getRange(rowNum, updatedAtCol).setValue(now);
+      }
+
+      if (lastTextCol > 0) sheet.getRange(rowNum, lastTextCol).setValue(newText);
+      if (lastCountCol > 0) sheet.getRange(rowNum, lastCountCol).setValue(newCount);
+      if (statusCol > 0) sheet.getRange(rowNum, statusCol).setValue(status);
+      if (lastCheckedCol > 0) sheet.getRange(rowNum, lastCheckedCol).setValue(now);
+    } else {
+      if (statusCol > 0) sheet.getRange(rowNum, statusCol).setValue('ตรวจสอบไม่ได้: ' + (res.error || ''));
+      if (lastCheckedCol > 0) sheet.getRange(rowNum, lastCheckedCol).setValue(now);
+    }
+  }
+
+  // Send Telegram notification if updates found
+  if (notifyTelegram && newUpdates.length > 0 && TELEGRAM_BOT_TOKEN && TELEGRAM_CHAT_ID) {
+    try {
+      let msg = '🚨 <b>[แจ้งเตือนต้นฉบับอัปเดตตอนใหม่!]</b>\n\n';
+      newUpdates.forEach((u, idx) => {
+        msg += (idx + 1) + '. 📖 <b>' + u.mangaName + '</b>\n';
+        msg += '   ├ เดิม: ' + (u.oldText || 'เพิ่งเริ่มติดตาม') + '\n';
+        msg += '   ├ ใหม่: <b>' + u.newText + '</b>\n';
+        msg += '   └ 🔗 <a href="' + u.url + '">เปิดดูต้นฉบับ</a>\n\n';
+      });
+      sendTelegramMessage(TELEGRAM_CHAT_ID, msg);
+    } catch (e) {
+      console.error('Telegram notification error:', e);
+    }
+  }
+
+  return {
+    success: true,
+    checkedAt: now.toISOString(),
+    newUpdatesCount: newUpdates.length,
+    newUpdates: newUpdates,
+    list: getRawTrackerList()
+  };
+}
+
+function setupHourlyTrackerTrigger() {
+  const functionName = 'hourlyRawTrackerJob';
+  const triggers = ScriptApp.getProjectTriggers();
+  triggers.forEach(t => {
+    if (t.getHandlerFunction() === functionName) {
+      ScriptApp.deleteTrigger(t);
+    }
+  });
+
+  const newTrigger = ScriptApp.newTrigger(functionName)
+    .timeBased()
+    .everyHours(1)
+    .create();
+
+  return {
+    success: true,
+    triggerId: newTrigger.getUniqueId(),
+    message: 'ตั้งระบบตรวจสอบต้นฉบับอัตโนมัติทุกๆ 1 ชั่วโมงเรียบร้อยแล้ว'
+  };
+}
+
+function hourlyRawTrackerJob() {
+  checkAllRawTrackers(true);
 }
