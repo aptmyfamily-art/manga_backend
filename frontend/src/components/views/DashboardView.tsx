@@ -53,14 +53,31 @@ export function DashboardView({
     // (คิวงานที่ยังแปลหรือลงคำไม่เสร็จ โดยงานแปล+ลงคำนับเป็น 1 ตอน/คิว ไม่นับซ้ำ 2 ครั้ง)
     let pendingTranslateAndTypeset = 0
     const activeQueue: any[] = []
+    const allowedPendingSteps = ["upload", "extract", "translate", "typeset"]
+
     queueList.forEach((q) => {
       if (isStepDone(q.poststatus)) return
-      activeQueue.push(q)
+      const stepKey = getQueueCurrentStep(q)
+      // แสดงเฉพาะ อัป raw, ดึงคำ, แปล, ลงคำ
+      if (allowedPendingSteps.includes(stepKey)) {
+        activeQueue.push(q)
+      }
+
       const transDone = isStepDone(q.translatestatus)
       const typesetDone = isStepDone(q.typesetstatus)
       if (!transDone || !typesetDone) {
         pendingTranslateAndTypeset += getChapterCount(q.chapter)
       }
+    })
+
+    // เรียงงานด่วนขึ้นก่อน
+    activeQueue.sort((a, b) => {
+      const mangaA = mangaList.find((m) => String(m.mangaid) === String(a.mangaid))
+      const mangaB = mangaList.find((m) => String(m.mangaid) === String(b.mangaid))
+      const urgA = isUrgentManga(mangaA) ? 1 : 0
+      const urgB = isUrgentManga(mangaB) ? 1 : 0
+      if (urgA !== urgB) return urgB - urgA
+      return (b.queueid || 0) - (a.queueid || 0)
     })
 
     // โพสต์แล้ว: งานที่ขั้นตอนโพสต์เสร็จสิ้นทั้งหมดในระบบ
