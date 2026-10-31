@@ -242,14 +242,20 @@ export function RawTrackerView({
         pattern: item.pattern,
       })
       if (res && res.success) {
+        const currentNum = Number(item.currentChapter || 0)
+        const oldScrapedNum = Number(item.lastrawcount || 0)
+        const newScrapedNum = Number(res.chapterCount || 0)
+
         const isChanged =
-          item.lastrawtext && item.lastrawtext !== res.rawText
+          (item.lastrawtext && item.lastrawtext !== res.rawText) ||
+          (newScrapedNum > 0 && (oldScrapedNum > 0 ? newScrapedNum > oldScrapedNum : (currentNum > 0 && newScrapedNum > currentNum)))
+
+        const diff = Math.max(
+          1,
+          newScrapedNum - (oldScrapedNum > 0 ? oldScrapedNum : currentNum)
+        )
         const newStatus = isChanged
-          ? `มีตอนใหม่ (+${
-              res.chapterCount && item.lastrawcount
-                ? Math.max(1, Number(res.chapterCount) - Number(item.lastrawcount))
-                : 1
-            } ตอน)`
+          ? `มีตอนใหม่ (+${diff} ตอน)`
           : "เป็นปัจจุบัน"
 
         await callGasApi("UPDATE_RAW_TRACKER", {
@@ -431,7 +437,7 @@ export function RawTrackerView({
                 )}
               </h2>
               <p className="text-xs text-slate-400">
-                ระบบ Web Scraping ตรวจสอบหน้าเว็บจีน/เกาหลีอัตโนมัติทุก 1 ชม. (เช่น 共377个内容)
+                ระบบ Web Scraping ตรวจสอบหน้าเว็บจีน/เกาหลีอัตโนมัติทุก 1 ชม. (快看: 共377个内容 / QQ: 最新话：[第...话...]日期)
               </p>
             </div>
           </div>
@@ -757,7 +763,10 @@ export function RawTrackerView({
                       <TableCell className="text-center">
                         {item.lastrawtext ? (
                           <div className="inline-flex flex-col items-center">
-                            <span className="font-mono text-xs px-2.5 py-1 rounded-md bg-[#0b1120] text-pink-300 border border-pink-500/30 font-semibold shadow-xs">
+                            <span
+                              className="font-mono text-xs px-2.5 py-1 rounded-md bg-[#0b1120] text-pink-300 border border-pink-500/30 font-semibold shadow-xs max-w-[280px] truncate"
+                              title={item.lastrawtext}
+                            >
                               {item.lastrawtext}
                             </span>
                             {item.lastrawcount && (
@@ -970,17 +979,17 @@ export function RawTrackerView({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setFormPattern("第(\\d+)话")}
+                  onClick={() => setFormPattern("")}
                   className="text-indigo-400 hover:underline cursor-pointer"
                 >
-                  [QQ: 第(\d+)话]
+                  [ac.qq: 最新话：[第...话...]日期 (อัตโนมัติ)]
                 </button>
                 <button
                   type="button"
                   onClick={() => setFormPattern("")}
                   className="text-slate-400 hover:underline cursor-pointer"
                 >
-                  [ล้างเป็นค่าอัตโนมัติ]
+                  [ล้างเป็นค่าอัตโนมัติ (แนะนำ)]
                 </button>
               </div>
             </div>

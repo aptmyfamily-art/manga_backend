@@ -2310,7 +2310,12 @@ function scrapeRawUrl(url, pattern) {
           matchedText = match[0];
           if (match[1]) {
             const num = parseFloat(match[1].replace(/,/g, ''));
-            if (!isNaN(num)) chapterCount = num;
+            if (!isNaN(num)) {
+              chapterCount = num;
+            } else {
+              const innerNum = match[1].match(/(?:第)?\s*(\d+(?:\.\d+)?)\s*(?:话|集)?/);
+              if (innerNum) chapterCount = parseFloat(innerNum[1]);
+            }
           }
         }
       } catch (e) {
@@ -2318,7 +2323,38 @@ function scrapeRawUrl(url, pattern) {
       }
     }
 
-    // 2. Kuaikanmanhua default pattern: 共377个内容
+    // 2. QQ Comic (ac.qq.com) pattern: 最新话：[第277话 哪个才是真的？]2026.10.30
+    // Matches exact HTML structure: <li><span class="ui-font-fb">最新话：</span><a class="works-ft-new" ...>[第277话 哪个才是真的？]</a><span class="ui-pl10 ui-text-gray6">2026.10.30</span></li>
+    if (!matchedText && (cleanUrl.indexOf('ac.qq.com') !== -1 || html.indexOf('最新话') !== -1)) {
+      const qqLiMatch = html.match(/<li[^>]*>(?:(?!<\/li>)[\s\S])*?最新话(?:(?!<\/li>)[\s\S])*?<\/li>/i);
+      if (qqLiMatch) {
+        const rawLi = qqLiMatch[0];
+        const titleMatch = rawLi.match(/\[([^\]]+)\]/);
+        const dateMatch = rawLi.match(/(\d{4}[.\-/]\d{1,2}[.\-/]\d{1,2})/);
+        if (titleMatch) {
+          const innerTitle = titleMatch[1].trim();
+          const dateStr = dateMatch ? dateMatch[1].trim() : '';
+          matchedText = '最新话：[' + innerTitle + ']' + (dateStr ? dateStr : '');
+          const chapNumMatch = innerTitle.match(/(?:第)?\s*(\d+(?:\.\d+)?)\s*(?:话|集)?/);
+          if (chapNumMatch) {
+            chapterCount = parseFloat(chapNumMatch[1]);
+          }
+        }
+      } else {
+        const rawQqMatch = html.match(/最新话[：:][\s\S]*?\[([^\]]+)\](?:[\s\S]*?(\d{4}[.\-/]\d{1,2}[.\-/]\d{1,2}))?/);
+        if (rawQqMatch) {
+          const innerTitle = rawQqMatch[1].trim();
+          const dateStr = rawQqMatch[2] ? rawQqMatch[2].trim() : '';
+          matchedText = '最新话：[' + innerTitle + ']' + (dateStr ? dateStr : '');
+          const chapNumMatch = innerTitle.match(/(?:第)?\s*(\d+(?:\.\d+)?)\s*(?:话|集)?/);
+          if (chapNumMatch) {
+            chapterCount = parseFloat(chapNumMatch[1]);
+          }
+        }
+      }
+    }
+
+    // 3. Kuaikanmanhua default pattern: 共377个内容
     if (!matchedText) {
       const matchKuaikan = html.match(/共\s*(\d+)\s*个内容/);
       if (matchKuaikan) {
@@ -2327,7 +2363,7 @@ function scrapeRawUrl(url, pattern) {
       }
     }
 
-    // 3. QQ Comic pattern: 第...话 or 更新至...话
+    // 4. QQ Comic fallback patterns: 第...话 or 更新至...话
     if (!matchedText) {
       const matchQq = html.match(/更新至\s*(\d+)\s*话/) || html.match(/共\s*(\d+)\s*话/);
       if (matchQq) {
@@ -2349,7 +2385,7 @@ function scrapeRawUrl(url, pattern) {
       }
     }
 
-    // 4. Other common patterns
+    // 5. Other common patterns
     if (!matchedText) {
       const generic = html.match(/(?:更新至|連載至|连载至|Chapter|Ch\.)\s*(\d+)/i);
       if (generic) {
@@ -2530,6 +2566,7 @@ function checkAllRawTrackers(notifyTelegram = false) {
 
   const headers = data[0].map(h => h.toString().toLowerCase().trim());
   const idCol = headers.indexOf('trackerid') + 1;
+  const mangaIdCol = headers.indexOf('mangaid') + 1;
   const nameCol = headers.indexOf('manganame') + 1;
   const urlCol = headers.indexOf('url') + 1;
   const patternCol = headers.indexOf('pattern') + 1;
@@ -2540,12 +2577,17 @@ function checkAllRawTrackers(notifyTelegram = false) {
   const updatedAtCol = headers.indexOf('updatedat') + 1;
   const autoCheckCol = headers.indexOf('autocheck') + 1;
 
+  const mangaList = getMangaList();
+  const mangaMap = {};
+  mangaList.forEach(m => { mangaMap[String(m.mangaid)] = m; });
+
   const newUpdates = [];
   const now = new Date();
 
   for (let i = 1; i < data.length; i++) {
     const rowNum = i + 1;
     const trackerId = data[i][idCol - 1];
+    const mangaId = mangaIdCol > 0 ? data[i][mangaIdCol - 1] : '';
     const mangaName = data[i][nameCol - 1];
     const url = data[i][urlCol - 1];
     const pattern = patternCol > 0 ? data[i][patternCol - 1] : '';
@@ -2559,11 +2601,14 @@ function checkAllRawTrackers(notifyTelegram = false) {
     if (res.success) {
       const newText = res.rawText;
       const newCount = res.chapterCount;
-      const isChanged = (oldText !== '' && oldText !== newText) || (oldCount > 0 && newCount > oldCount);
+      const manga = mangaMap[String(mangaId)];
+      const systemChap = manga ? (parseFloat(manga.lastchapter) || 0) : 0;
+      const baseCount = oldCount > 0 ? oldCount : systemChap;
+      const isChanged = (oldText !== '' && oldText !== newText) || (baseCount > 0 && newCount > baseCount);
 
       let status = 'เป็นปัจจุบัน';
       if (isChanged) {
-        const diff = newCount > oldCount && oldCount > 0 ? (newCount - oldCount) : 1;
+        const diff = baseCount > 0 && newCount > baseCount ? (newCount - baseCount) : 1;
         status = 'มีตอนใหม่ (+' + diff + ' ตอน)';
         newUpdates.push({
           mangaName: mangaName,
