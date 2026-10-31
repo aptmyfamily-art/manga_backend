@@ -517,31 +517,29 @@ function getSheet(name = SHEET_NAME) {
  * READ: ดึงข้อมูลและแปลงเป็น Object ตามหัวตาราง
  */
 function getMangaList() {
-  return getCachedData('mangaList', () => {
-    try {
-      const sheet = getSheet();
-      const data = sheet.getDataRange().getValues();
-      if (data.length <= 1) return [];
+  try {
+    const sheet = getSheet();
+    const data = sheet.getDataRange().getValues();
+    if (data.length <= 1) return [];
 
-      const rawHeaders = data.shift();
-      const headers = rawHeaders.map(h => h.toString().toLowerCase().trim());
-      
-      return data.map(row => {
-        let obj = {};
-        headers.forEach((header, i) => {
-          let val = row[i];
-          if (val instanceof Date) {
-            val = val.toISOString();
-          }
-          obj[header] = val;
-        });
-        return obj;
-      }).filter(item => item.manganame);
-    } catch (err) {
-      console.error('getMangaList Error:', err);
-      return [];
-    }
-  }, 600);
+    const rawHeaders = data.shift();
+    const headers = rawHeaders.map(h => h.toString().toLowerCase().trim());
+    
+    return data.map(row => {
+      let obj = {};
+      headers.forEach((header, i) => {
+        let val = row[i];
+        if (val instanceof Date) {
+          val = val.toISOString();
+        }
+        obj[header] = val;
+      });
+      return obj;
+    }).filter(item => item.manganame);
+  } catch (err) {
+    console.error('getMangaList Error:', err);
+    return [];
+  }
 }
 
 /**
@@ -743,56 +741,55 @@ function deleteManga(id) {
 }
 
 /**
- * QUEUE OPERATIONS
+ * QUEUE OPERATIONS (Direct Dynamic Query)
  */
 function getWorkQueue(forceRefresh = false, month = 'all', year = 'all', includeIncomplete = false) {
-  if (forceRefresh) {
-    invalidateCache('workQueue');
-  }
-  const allQueue = getCachedData('workQueue', () => {
-    try {
-      const sheet = getSheet(QUEUE_SHEET_NAME);
-      const data = sheet.getDataRange().getValues();
-      if (data.length <= 1) return [];
+  try {
+    const sheet = getSheet(QUEUE_SHEET_NAME);
+    const data = sheet.getDataRange().getValues();
+    if (data.length <= 1) return [];
 
-      const headers = data.shift().map(h => h.toString().toLowerCase().trim());
-      return data.map(row => {
-        let obj = {};
-        headers.forEach((header, i) => {
-          let val = row[i];
-          if (val instanceof Date) val = val.toISOString();
-          obj[header] = val;
-        });
-        if (!obj.poststatus || String(obj.poststatus).trim() === '') obj.poststatus = 'รอเริ่ม';
-        if (!obj.uploadstatus || String(obj.uploadstatus).trim() === '') obj.uploadstatus = 'รอเริ่ม';
-        if (!obj.translatestatus || String(obj.translatestatus).trim() === '') obj.translatestatus = 'รอเริ่ม';
-        if (!obj.typesetstatus || String(obj.typesetstatus).trim() === '') obj.typesetstatus = 'รอเริ่ม';
-        if (!obj.publishstatus || String(obj.publishstatus).trim() === '') obj.publishstatus = 'รอเริ่ม';
-        return obj;
-      });
-    } catch (err) {
-      return [];
+    const headers = data.shift().map(h => h.toString().toLowerCase().trim());
+    const mStr = month !== undefined && month !== null && month !== '' ? String(month) : 'all';
+    const yStr = year !== undefined && year !== null && year !== '' ? String(year) : 'all';
+
+    const results = [];
+    for (let r = 0; r < data.length; r++) {
+      const row = data[r];
+      let obj = {};
+      for (let i = 0; i < headers.length; i++) {
+        let val = row[i];
+        if (val instanceof Date) val = val.toISOString();
+        obj[headers[i]] = val;
+      }
+      if (!obj.poststatus || String(obj.poststatus).trim() === '') obj.poststatus = 'รอเริ่ม';
+      if (!obj.uploadstatus || String(obj.uploadstatus).trim() === '') obj.uploadstatus = 'รอเริ่ม';
+      if (!obj.translatestatus || String(obj.translatestatus).trim() === '') obj.translatestatus = 'รอเริ่ม';
+      if (!obj.typesetstatus || String(obj.typesetstatus).trim() === '') obj.typesetstatus = 'รอเริ่ม';
+      if (!obj.publishstatus || String(obj.publishstatus).trim() === '') obj.publishstatus = 'รอเริ่ม';
+
+      if (mStr === 'all' && yStr === 'all') {
+        results.push(obj);
+      } else {
+        if (includeIncomplete && obj.poststatus !== 'เสร็จแล้ว') {
+          results.push(obj);
+        } else if (obj.createdat) {
+          const d = new Date(obj.createdat);
+          if (!isNaN(d.getTime())) {
+            const mMatch = mStr === 'all' || String(d.getMonth() + 1) === mStr;
+            const yMatch = yStr === 'all' || String(d.getFullYear()) === yStr;
+            if (mMatch && yMatch) {
+              results.push(obj);
+            }
+          }
+        }
+      }
     }
-  }, 600);
-
-  const mStr = month !== undefined && month !== null && month !== '' ? String(month) : 'all';
-  const yStr = year !== undefined && year !== null && year !== '' ? String(year) : 'all';
-
-  if (mStr === 'all' && yStr === 'all') {
-    return allQueue;
+    return results;
+  } catch (err) {
+    console.error('getWorkQueue Error:', err);
+    return [];
   }
-
-  return allQueue.filter(q => {
-    if (includeIncomplete && q.poststatus !== 'เสร็จแล้ว') {
-      return true;
-    }
-    if (!q.createdat) return false;
-    const d = new Date(q.createdat);
-    if (isNaN(d.getTime())) return false;
-    const mMatch = mStr === 'all' || String(d.getMonth() + 1) === mStr;
-    const yMatch = yStr === 'all' || String(d.getFullYear()) === yStr;
-    return mMatch && yMatch;
-  });
 }
 
 function addQueue(queueData) {
@@ -1344,25 +1341,23 @@ function updateFullQueueItem(queueId, updateData) {
 }
 
 function getTeamMembers() {
-  return getCachedData('teamList', () => {
-    try {
-      const sheet = getSheet(TEAM_SHEET_NAME);
-      const data = sheet.getDataRange().getValues();
-      if (data.length <= 1) return [];
+  try {
+    const sheet = getSheet(TEAM_SHEET_NAME);
+    const data = sheet.getDataRange().getValues();
+    if (data.length <= 1) return [];
 
-      const headers = data.shift().map(h => h.toString().toLowerCase().trim());
-      return data.map(row => {
-        const obj = {};
-        headers.forEach((header, index) => {
-          obj[header] = row[index];
-        });
-        return obj;
+    const headers = data.shift().map(h => h.toString().toLowerCase().trim());
+    return data.map(row => {
+      const obj = {};
+      headers.forEach((header, index) => {
+        obj[header] = row[index];
       });
-    } catch (err) {
-      console.error('getTeamMembers Error:', err);
-      return [];
-    }
-  }, 3600);
+      return obj;
+    });
+  } catch (err) {
+    console.error('getTeamMembers Error:', err);
+    return [];
+  }
 }
 
 /**
@@ -1581,7 +1576,7 @@ function createMovePendingTrigger() {
 
 // --- BUDGET PAYEES ---
 function getBudgetPayees() {
-  return getCachedData('budget_payees', () => readSheetData(BUDGET_PAYEE_SHEET_NAME), 600);
+  return readSheetData(BUDGET_PAYEE_SHEET_NAME);
 }
 
 function addBudgetPayee(payee) {
@@ -1654,7 +1649,7 @@ function deleteBudgetPayee(id) {
 
 // --- BUDGET TRANSACTIONS ---
 function getBudgetTransactions() {
-  return getCachedData('budget_transactions', () => readSheetData(BUDGET_TRANSACTION_SHEET_NAME), 600);
+  return readSheetData(BUDGET_TRANSACTION_SHEET_NAME);
 }
 
 function addBudgetTransaction(trans) {
@@ -1750,20 +1745,13 @@ function getAllData() {
 }
 
 function getDashboardData(forceRefresh = false, month, year) {
-  if (forceRefresh) {
-    invalidateCache(['mangaList', 'workQueue', 'teamList', 'manga_sales', 'budget_payees', 'budget_transactions', 'website_list']);
-  }
   const now = new Date();
   const targetMonth = month !== undefined && month !== null && month !== '' ? month : String(now.getMonth() + 1);
   const targetYear = year !== undefined && year !== null && year !== '' ? year : String(now.getFullYear());
   return {
     manga: getMangaList(),
     queue: getWorkQueue(forceRefresh, targetMonth, targetYear, true),
-    team: getTeamMembers(),
-    sales: getMangaSales(),
-    payees: getBudgetPayees(),
-    transactions: getBudgetTransactions(),
-    websites: getWebsiteList()
+    team: getTeamMembers()
   };
 }
 
@@ -1823,29 +1811,27 @@ function checkQueueLock(queueId) {
  * MANGA SALES (Financials) CRUD
  */
 function getMangaSales() {
-  return getCachedData('manga_sales', () => {
-    try {
-      const sheet = getSheet(MANGA_SALES_SHEET_NAME);
-      const data = sheet.getDataRange().getValues();
-      if (data.length <= 1) return [];
+  try {
+    const sheet = getSheet(MANGA_SALES_SHEET_NAME);
+    const data = sheet.getDataRange().getValues();
+    if (data.length <= 1) return [];
 
-      const rawHeaders = data.shift();
-      const headers = rawHeaders.map(h => h.toString().toLowerCase().trim());
-      
-      return data.map((row, idx) => {
-        let obj = { _rowIndex: idx };
-        headers.forEach((header, i) => {
-          let val = row[i];
-          if (val instanceof Date) val = val.toISOString();
-          obj[header] = val;
-        });
-        return obj;
+    const rawHeaders = data.shift();
+    const headers = rawHeaders.map(h => h.toString().toLowerCase().trim());
+    
+    return data.map((row, idx) => {
+      let obj = { _rowIndex: idx };
+      headers.forEach((header, i) => {
+        let val = row[i];
+        if (val instanceof Date) val = val.toISOString();
+        obj[header] = val;
       });
-    } catch (err) {
-      console.error('getMangaSales Error:', err);
-      return [];
-    }
-  }, 600);
+      return obj;
+    });
+  } catch (err) {
+    console.error('getMangaSales Error:', err);
+    return [];
+  }
 }
 
 function addMangaSale(sale) {
@@ -1980,19 +1966,17 @@ function countFinishedChapters(mangaId, year, month) {
 }
 
 function getWebsiteList() {
-  return getCachedData('website_list', () => {
-    try {
-      const sheet = getSheet(WEBSITE_SHEET_NAME);
-      const data = sheet.getDataRange().getValues();
-      if (data.length <= 1) return [];
+  try {
+    const sheet = getSheet(WEBSITE_SHEET_NAME);
+    const data = sheet.getDataRange().getValues();
+    if (data.length <= 1) return [];
 
-      data.shift();
-      return data.map(row => row[0]).filter(Boolean);
-    } catch (err) {
-      console.error('getWebsiteList Error:', err);
-      return [];
-    }
-  }, 600);
+    data.shift();
+    return data.map(row => row[0]).filter(Boolean);
+  } catch (err) {
+    console.error('getWebsiteList Error:', err);
+    return [];
+  }
 }
 
 function getFinancialInitData() {

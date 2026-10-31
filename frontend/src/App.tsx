@@ -88,84 +88,116 @@ export default function App() {
   const [queueYear, setQueueYear] = React.useState<string>(
     String(nowInit.getFullYear())
   )
-  const [fetchingPeriod, setFetchingPeriod] = React.useState(false)
 
-  // Countdown timer state
-  const [lastFetchDate, setLastFetchDate] = React.useState<Date>(new Date())
-  const [countdown, setCountdown] = React.useState(REFRESH_INTERVAL_SEC)
-
+  // 1. Core Data: Manga List (Direct query, cached in browser memory)
   const {
-    data: dashboardData,
-    isLoading,
-    isFetching,
-  } = useQuery({
-    queryKey: ["dashboardData", passcode],
-    queryFn: async () => {
-      const res = await callGasApi("GET_DASHBOARD_DATA", {
-        forceRefresh: false,
-        month: queueMonth,
-        year: queueYear,
-      })
-      setLastFetchDate(new Date())
-      setCountdown(REFRESH_INTERVAL_SEC)
-      return res
-    },
+    data: mangaList = [],
+    isLoading: loadingManga,
+    refetch: refetchManga,
+  } = useQuery<any[]>({
+    queryKey: ["mangaList", passcode],
+    queryFn: () => callGasApi("GET_MANGA_LIST"),
     enabled: Boolean(passcode),
-    refetchInterval: REFRESH_INTERVAL_SEC * 1000,
-    retry: 1,
+    staleTime: 5 * 60 * 1000,
   })
 
-  const handleQueuePeriodChange = async (newMonth: string, newYear: string) => {
+  // 2. Core Data: Team Members (Direct query, cached in browser memory)
+  const {
+    data: teamList = [],
+    isLoading: loadingTeam,
+    refetch: refetchTeam,
+  } = useQuery<any[]>({
+    queryKey: ["teamList", passcode],
+    queryFn: () => callGasApi("GET_TEAM_MEMBERS"),
+    enabled: Boolean(passcode),
+    staleTime: 5 * 60 * 1000,
+  })
+
+  // 3. Queue Data: Work Queue (Direct query by selected month/year)
+  const {
+    data: queueList = [],
+    isLoading: loadingQueue,
+    isFetching: fetchingQueue,
+    refetch: refetchQueue,
+  } = useQuery<any[]>({
+    queryKey: ["workQueue", passcode, queueMonth, queueYear],
+    queryFn: () =>
+      callGasApi("GET_WORK_QUEUE", {
+        month: queueMonth,
+        year: queueYear,
+        includeIncomplete: true,
+      }),
+    enabled: Boolean(passcode),
+    staleTime: 60 * 1000,
+  })
+
+  // 4. On-Demand Data: Financials (Only fetched when opening Financials view)
+  const {
+    data: financialData,
+    isLoading: loadingFinancials,
+    isFetching: fetchingFinancials,
+    refetch: refetchFinancials,
+  } = useQuery<{ manga?: any[]; sales?: any[]; websites?: string[] }>({
+    queryKey: ["financialData", passcode],
+    queryFn: () => callGasApi("GET_FINANCIAL_DATA"),
+    enabled: Boolean(passcode) && activeView === "financials",
+    staleTime: 3 * 60 * 1000,
+  })
+
+  // 5. On-Demand Data: Budget (Only fetched when opening Budget view)
+  const {
+    data: budgetData,
+    isLoading: loadingBudget,
+    isFetching: fetchingBudget,
+    refetch: refetchBudget,
+  } = useQuery<{ payees?: any[]; transactions?: any[]; websites?: string[] }>({
+    queryKey: ["budgetData", passcode],
+    queryFn: () => callGasApi("GET_BUDGET_DATA"),
+    enabled: Boolean(passcode) && activeView === "budget",
+    staleTime: 3 * 60 * 1000,
+  })
+
+  const salesList = Array.isArray(financialData?.sales)
+    ? financialData.sales
+    : []
+  const payeeList = Array.isArray(budgetData?.payees)
+    ? budgetData.payees
+    : []
+  const transactionList = Array.isArray(budgetData?.transactions)
+    ? budgetData.transactions
+    : []
+  const websiteList = Array.isArray(financialData?.websites)
+    ? financialData.websites
+    : Array.isArray(budgetData?.websites)
+    ? budgetData.websites
+    : []
+
+  const isBusyFetching =
+    loadingManga ||
+    loadingTeam ||
+    fetchingQueue ||
+    (activeView === "financials" && (loadingFinancials || fetchingFinancials)) ||
+    (activeView === "budget" && (loadingBudget || fetchingBudget))
+
+  const handleQueuePeriodChange = (newMonth: string, newYear: string) => {
     setQueueMonth(newMonth)
     setQueueYear(newYear)
-    setFetchingPeriod(true)
-    const toastId = "fetch-queue-period"
-    const label =
-      newMonth === "all" && newYear === "all"
-        ? "ทั้งหมดทุกปี"
-        : newMonth === "all"
-        ? `ทั้งปี ${Number(newYear) + 543}`
-        : `เดือน ${newMonth}/${Number(newYear) + 543}`
-    toast.loading(`กำลังดึงข้อมูลคิวงาน (${label})...`, { id: toastId })
-    try {
-      const newQueue = await callGasApi("GET_WORK_QUEUE", {
-        forceRefresh: false,
-        month: newMonth,
-        year: newYear,
-        includeIncomplete: false,
-      })
-      updateCachedField("queue", newQueue)
-      toast.success(`ดึงคิวงาน (${label}) สำเร็จ (${newQueue.length} รายการ)`, {
-        id: toastId,
-      })
-    } catch (err: any) {
-      toast.error(err.message || "ดึงข้อมูลคิวงานไม่สำเร็จ", { id: toastId })
-    } finally {
-      setFetchingPeriod(false)
-    }
   }
 
-  React.useEffect(() => {
-    if (!passcode) return
-    const timer = setInterval(() => {
-      setCountdown((prev) => (prev > 0 ? prev - 1 : REFRESH_INTERVAL_SEC))
-    }, 1000)
-    return () => clearInterval(timer)
-  }, [passcode])
-
   const handleManualRefresh = async () => {
-    toast.loading("กำลังซิงค์ข้อมูลล่าสุดจาก Google Sheets...", {
+    toast.loading("กำลังดึงข้อมูลล่าสุดจาก Google Sheets...", {
       id: "manual-refresh",
     })
     try {
-      const fresh = await callGasApi("GET_DASHBOARD_DATA", {
-        forceRefresh: true,
-        month: queueMonth,
-        year: queueYear,
-      })
-      queryClient.setQueryData(["dashboardData", passcode], fresh)
-      setLastFetchDate(new Date())
-      setCountdown(REFRESH_INTERVAL_SEC)
+      if (activeView === "financials") {
+        await refetchFinancials()
+      } else if (activeView === "budget") {
+        await refetchBudget()
+      } else if (activeView === "team") {
+        await refetchTeam()
+      } else {
+        await Promise.all([refetchManga(), refetchQueue(), refetchTeam()])
+      }
       toast.success("อัปเดตข้อมูลล่าสุดเรียบร้อยแล้ว", { id: "manual-refresh" })
     } catch (err: any) {
       if (err.code === "UNAUTHORIZED") {
@@ -178,11 +210,19 @@ export default function App() {
     }
   }
 
-  const updateCachedField = (field: string, value: any) => {
-    queryClient.setQueryData(["dashboardData", passcode], (old: any) => ({
-      ...(old || {}),
-      [field]: value,
-    }))
+  const updateQueueCache = (newQueue: any[]) => {
+    queryClient.setQueryData(
+      ["workQueue", passcode, queueMonth, queueYear],
+      newQueue
+    )
+  }
+
+  const updateMangaCache = (newManga: any[]) => {
+    queryClient.setQueryData(["mangaList", passcode], newManga)
+  }
+
+  const updateTeamCache = (newTeam: any[]) => {
+    queryClient.setQueryData(["teamList", passcode], newTeam)
   }
 
   const handleNavClick = (view: ViewKey) => {
@@ -233,30 +273,6 @@ export default function App() {
       </>
     )
   }
-
-  const mangaList = Array.isArray(dashboardData?.manga)
-    ? dashboardData.manga
-    : []
-  const queueList = Array.isArray(dashboardData?.queue)
-    ? dashboardData.queue
-    : []
-  const teamList = Array.isArray(dashboardData?.team) ? dashboardData.team : []
-  const salesList = Array.isArray(dashboardData?.sales)
-    ? dashboardData.sales
-    : []
-  const payeeList = Array.isArray(dashboardData?.payees)
-    ? dashboardData.payees
-    : []
-  const transactionList = Array.isArray(dashboardData?.transactions)
-    ? dashboardData.transactions
-    : []
-  const websiteList = Array.isArray(dashboardData?.websites)
-    ? dashboardData.websites
-    : []
-
-  const nextFetchDate = new Date(
-    lastFetchDate.getTime() + REFRESH_INTERVAL_SEC * 1000
-  )
 
   const navItems: Array<{ id: ViewKey; label: string; icon: any }> = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -359,21 +375,17 @@ export default function App() {
               <div className="flex items-center justify-end gap-1.5 font-semibold text-slate-200">
                 <span
                   className={`h-2 w-2 rounded-full ${
-                    isFetching
+                    isBusyFetching
                       ? "bg-amber-400 animate-ping"
                       : "bg-emerald-400"
                   }`}
                 />
-                {isFetching
+                {isBusyFetching
                   ? "กำลังดึงข้อมูล..."
-                  : "สถานะคลาวด์: เชื่อมต่อปกติ"}
+                  : "สถานะ: เชื่อมต่อตรง (Real-time)"}
               </div>
-              <div className="hidden sm:block text-[11px]">
-                ดึงล่าสุด: {lastFetchDate.toLocaleTimeString("th-TH")} |{" "}
-                <span className="text-indigo-400 font-medium">
-                  รอบถัดไป: {nextFetchDate.toLocaleTimeString("th-TH")} (
-                  {countdown}s)
-                </span>
+              <div className="hidden sm:block text-[11px] text-slate-400">
+                โหลดแบบ Dynamic แยกตาราง • รวดเร็ว
               </div>
             </div>
 
@@ -381,11 +393,11 @@ export default function App() {
               variant="outline"
               size="icon"
               onClick={handleManualRefresh}
-              disabled={isFetching}
-              title="ซิงค์ข้อมูลทันที (Bypass Cache)"
+              disabled={isBusyFetching}
+              title="รีเฟรชข้อมูลสดทันที"
             >
               <RefreshCw
-                className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`}
+                className={`h-4 w-4 ${isBusyFetching ? "animate-spin" : ""}`}
               />
             </Button>
           </div>
@@ -397,7 +409,7 @@ export default function App() {
             <DashboardView
               mangaList={mangaList}
               queueList={queueList}
-              isLoading={isLoading}
+              isLoading={loadingManga || loadingQueue}
               onSwitchToQueue={(term) => {
                 if (term) setQueueSearchTerm(term)
                 setActiveView("queue")
@@ -415,7 +427,7 @@ export default function App() {
               mangaList={mangaList}
               queueList={queueList}
               teamList={teamList}
-              isLoading={isLoading || fetchingPeriod}
+              isLoading={loadingQueue}
               monthFilter={queueMonth}
               yearFilter={queueYear}
               onPeriodChange={handleQueuePeriodChange}
@@ -429,14 +441,14 @@ export default function App() {
                 setEditingQueueItem(q)
                 setUpdateQueueOpen(true)
               }}
-              onQueueChange={(newQueue) => updateCachedField("queue", newQueue)}
+              onQueueChange={updateQueueCache}
             />
           )}
 
           {activeView === "team" && (
             <TeamView
               teamList={teamList}
-              onTeamChange={(newTeam) => updateCachedField("team", newTeam)}
+              onTeamChange={updateTeamCache}
             />
           )}
 
@@ -446,8 +458,14 @@ export default function App() {
               salesList={salesList}
               websiteList={websiteList}
               onSalesChange={(newSales, newWebsites) => {
-                updateCachedField("sales", newSales)
-                if (newWebsites) updateCachedField("websites", newWebsites)
+                queryClient.setQueryData(
+                  ["financialData", passcode],
+                  (old: any) => ({
+                    ...(old || {}),
+                    sales: newSales,
+                    ...(newWebsites ? { websites: newWebsites } : {}),
+                  })
+                )
               }}
             />
           )}
@@ -457,12 +475,24 @@ export default function App() {
               payeeList={payeeList}
               transactionList={transactionList}
               websiteList={websiteList}
-              onPayeesChange={(newPayees) =>
-                updateCachedField("payees", newPayees)
-              }
-              onTransactionsChange={(newTrans) =>
-                updateCachedField("transactions", newTrans)
-              }
+              onPayeesChange={(newPayees) => {
+                queryClient.setQueryData(
+                  ["budgetData", passcode],
+                  (old: any) => ({
+                    ...(old || {}),
+                    payees: newPayees,
+                  })
+                )
+              }}
+              onTransactionsChange={(newTrans) => {
+                queryClient.setQueryData(
+                  ["budgetData", passcode],
+                  (old: any) => ({
+                    ...(old || {}),
+                    transactions: newTrans,
+                  })
+                )
+              }}
             />
           )}
 
@@ -479,8 +509,8 @@ export default function App() {
                 setReturnToAddQueue(false)
                 setMangaModalOpen(true)
               }}
-              onMangaChange={(newManga) => updateCachedField("manga", newManga)}
-              onQueueChange={(newQueue) => updateCachedField("queue", newQueue)}
+              onMangaChange={updateMangaCache}
+              onQueueChange={updateQueueCache}
             />
           )}
         </main>
@@ -500,8 +530,8 @@ export default function App() {
           setMangaModalOpen(true)
         }}
         onSuccess={(newQueue, newManga) => {
-          updateCachedField("queue", newQueue)
-          if (newManga) updateCachedField("manga", newManga)
+          updateQueueCache(newQueue)
+          if (newManga) updateMangaCache(newManga)
         }}
       />
 
@@ -512,7 +542,7 @@ export default function App() {
         item={editingQueueItem}
         mangaList={mangaList}
         teamList={teamList}
-        onSuccess={(newQueue) => updateCachedField("queue", newQueue)}
+        onSuccess={updateQueueCache}
       />
 
       {/* Global Add/Edit Manga Modal */}
@@ -528,7 +558,7 @@ export default function App() {
         editItem={editingManga}
         teamList={teamList}
         onSuccess={(updatedList, newMangaId) => {
-          updateCachedField("manga", updatedList)
+          updateMangaCache(updatedList)
           if (returnToAddQueue) {
             setReturnToAddQueue(false)
             if (newMangaId) setPreselectedQueueMangaId(String(newMangaId))
