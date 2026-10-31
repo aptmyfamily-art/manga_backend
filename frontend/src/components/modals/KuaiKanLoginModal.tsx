@@ -551,7 +551,6 @@ export function KuaiKanLoginModal({
         const endIdx = Math.min((partIdx + 1) * PAGES_PER_PART, totalPages)
         const partNum = partIdx + 1
         const partRange = `หน้า ${startIdx + 1} - ${endIdx}`
-        const fileName = `Part_${String(partNum).padStart(2, "0")}.webp`
 
         setStitchProgress({
           currentPart: partNum,
@@ -576,6 +575,11 @@ export function KuaiKanLoginModal({
           return { img, scaledH }
         })
 
+        // หากความสูงเกิน 16,000px ใช้ JPEG เพื่อไม่ให้ติดลิมิต 16,383px ของ WebP spec
+        const useJpeg = totalHeight > 16000
+        const fileName = `Part_${String(partNum).padStart(2, "0")}.${useJpeg ? "jpg" : "webp"}`
+        const mimeType = useJpeg ? "image/jpeg" : "image/webp"
+
         // 2.3 สร้าง Canvas แล้ววาดต่อกันลงมา
         const canvas = document.createElement("canvas")
         canvas.width = standardWidth
@@ -592,11 +596,11 @@ export function KuaiKanLoginModal({
           currentY += item.scaledH
         }
 
-        // 2.4 ส่งออกเป็น WebP Blob
+        // 2.4 ส่งออกเป็น Blob (JPEG หรือ WebP ตามความสูง)
         const blob = await new Promise<Blob>((resolve, reject) => {
           canvas.toBlob(
-            (b) => (b ? resolve(b) : reject(new Error("สร้าง WebP blob ไม่สำเร็จ"))),
-            "image/webp",
+            (b) => (b ? resolve(b) : reject(new Error(`สร้าง ${useJpeg ? "JPEG" : "WebP"} blob ไม่สำเร็จ`))),
+            mimeType,
             0.92
           )
         })
@@ -629,7 +633,7 @@ export function KuaiKanLoginModal({
           partIndex: partNum,
           totalParts,
           fileName,
-          mimeType: "image/webp",
+          mimeType,
           base64Data,
           isLastPart: isLast,
           mangaId: "1",
