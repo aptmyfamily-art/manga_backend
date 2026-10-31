@@ -3496,7 +3496,7 @@ function downloadKuaikanChapterToDrive(payload) {
       return { error: 'ไม่พบภาพต้นฉบับ หรือตอนยังถูกล็อคอยู่ (VIP ยังไม่ active)' };
     }
 
-    const downloadLimit = Math.min(rawImages.length, 150);
+    const downloadLimit = rawImages.length;
     let downloadedCount = 0;
 
     for (let i = 0; i < downloadLimit; i++) {
