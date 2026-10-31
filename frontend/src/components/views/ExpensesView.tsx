@@ -52,6 +52,7 @@ import {
   ExternalLink,
   ChevronDown,
   ChevronUp,
+  RefreshCw,
 } from "lucide-react"
 
 ChartJS.register(
@@ -151,52 +152,60 @@ export function ExpensesView({
     "members"
   )
   const [copied, setCopied] = React.useState(false)
+  const [workStatusFilter, setWorkStatusFilter] = React.useState<
+    "all" | "completed" | "incomplete"
+  >("all")
 
-  // Direct dynamic query for the selected month's queue
+  // Queue cache loaded from GAS
   const [queueItems, setQueueItems] = React.useState<any[]>([])
   const [loadingQueue, setLoadingQueue] = React.useState(false)
 
-  const fetchMonthQueue = React.useCallback(async (month: string, year: string) => {
+  const fetchQueueData = React.useCallback(async () => {
     setLoadingQueue(true)
     try {
       const res = await callGasApi<any[]>("GET_WORK_QUEUE", {
-        month,
-        year,
+        month: "all",
+        year: "all",
         includeIncomplete: false,
       })
       setQueueItems(Array.isArray(res) ? res : [])
     } catch (err: any) {
-      toast.error(err.message || "ดึงข้อมูลคิวงานของเดือนที่เลือกไม่สำเร็จ")
+      toast.error(err.message || "ดึงข้อมูลคิวงานไม่สำเร็จ")
     } finally {
       setLoadingQueue(false)
     }
   }, [])
 
   React.useEffect(() => {
-    fetchMonthQueue(selectedMonth, selectedYear)
-  }, [selectedMonth, selectedYear, fetchMonthQueue])
+    fetchQueueData()
+  }, [fetchQueueData])
 
-  // Filter items in case "all" or specific dates
-  const filteredQueue = React.useMemo(() => {
-    return queueItems.filter((q) => {
-      if (selectedMonth === "all" && selectedYear === "all") return true
-      const d = parseQueueDate(q.createdat)
+  // Helper: check if a step's timestamp falls in selected month and year
+  const isDateInPeriod = React.useCallback(
+    (dateStr: any, targetMonth: string, targetYear: string): boolean => {
+      if (!dateStr) return false
+      if (targetMonth === "all" && targetYear === "all") return true
+      const d = parseQueueDate(dateStr)
       if (!d) return false
       const mMatch =
-        selectedMonth === "all" || String(d.getMonth() + 1) === selectedMonth
-      const yMatch =
-        selectedYear === "all" || String(d.getFullYear()) === selectedYear
+        targetMonth === "all" || String(d.getMonth() + 1) === targetMonth
+      const yMatch = targetYear === "all" || String(d.getFullYear()) === targetYear
       return mMatch && yMatch
-    })
-  }, [queueItems, selectedMonth, selectedYear])
+    },
+    []
+  )
 
-  // Calculate payroll per member
+  // Calculate payroll per member based on actual step completion timestamps
   const { memberPayrolls, chapterPayrolls, grandTotals } = React.useMemo(() => {
     const membersMap = new Map<string, MemberPayroll>()
 
     const getOrCreateMember = (rawName: string) => {
       const name = (rawName || "ไม่ระบุ").trim()
-      if (!membersMap.has(name)) {
+      const key = name.toLowerCase()
+      let foundKey = Array.from(membersMap.keys()).find(
+        (k) => k.toLowerCase() === key
+      )
+      if (!foundKey) {
         membersMap.set(name, {
           name,
           uploadChapters: 0,
@@ -212,14 +221,15 @@ export function ExpensesView({
           supportCost: 0,
           totalCost: 0,
         })
+        foundKey = name
       }
-      return membersMap.get(name)!
+      return membersMap.get(foundKey)!
     }
 
     // Initialize support payee (KIKKUK) even if no tasks
     if (rates.supportName && rates.supportAmount > 0) {
-      const kikkuk = getOrCreateMember(rates.supportName)
-      kikkuk.supportCost += rates.supportAmount
+      const supportMember = getOrCreateMember(rates.supportName)
+      supportMember.supportCost += rates.supportAmount
     }
 
     const chapPayrolls: any[] = []
@@ -233,7 +243,12 @@ export function ExpensesView({
     let totalTypesetChapters = 0
     let totalTypesetCost = 0
 
-    filteredQueue.forEach((q) => {
+    queueItems.forEach((q) => {
+      // Work status filter (Optional: "all" / "completed" only / "incomplete" only)
+      const isChapterComplete = isStepDone(q.poststatus)
+      if (workStatusFilter === "completed" && !isChapterComplete) return
+      if (workStatusFilter === "incomplete" && isChapterComplete) return
+
       const count = getChapterCount(q.chapter)
       const manga = mangaList.find(
         (m) =>
@@ -249,7 +264,12 @@ export function ExpensesView({
       let rowTypesetCost = 0
 
       // 1. Upload (อัป Raw) -> 10 บาท/ตอน
-      if (isStepDone(q.uploadstatus) && q.uploadername) {
+      const isUploadInPeriod = isDateInPeriod(
+        q.uploadtime || q.createdat,
+        selectedMonth,
+        selectedYear
+      )
+      if (isStepDone(q.uploadstatus) && q.uploadername && isUploadInPeriod) {
         const member = getOrCreateMember(q.uploadername)
         rowUploadCost = count * rates.uploadRate
         member.uploadChapters += count
@@ -259,11 +279,17 @@ export function ExpensesView({
       }
 
       // 2. Extract (ดึงคำ) -> 10 บาท/ตอน (ข้ามถ้า Skipped)
+      const isExtractInPeriod = isDateInPeriod(
+        q.extracttime || q.createdat,
+        selectedMonth,
+        selectedYear
+      )
       if (
         isStepDone(q.extractstatus) &&
         q.extractorname &&
         q.extractstatus !== "Skipped" &&
-        q.extractstatus !== "ข้าม"
+        q.extractstatus !== "ข้าม" &&
+        isExtractInPeriod
       ) {
         const member = getOrCreateMember(q.extractorname)
         rowExtractCost = count * rates.extractRate
@@ -274,11 +300,17 @@ export function ExpensesView({
       }
 
       // 3. Translate (แปล) -> Pratchaya: 100 / อื่นๆ: 25
+      const isTranslateInPeriod = isDateInPeriod(
+        q.translatetime || q.createdat,
+        selectedMonth,
+        selectedYear
+      )
       if (
         isStepDone(q.translatestatus) &&
         q.translatorname &&
         q.translatestatus !== "Skipped" &&
-        q.translatestatus !== "ข้าม"
+        q.translatestatus !== "ข้าม" &&
+        isTranslateInPeriod
       ) {
         const member = getOrCreateMember(q.translatorname)
         const isSpecial = member.name
@@ -296,11 +328,17 @@ export function ExpensesView({
       }
 
       // 4. Typeset (ลงคำ) -> Tilly: 45 / อื่นๆ: 40
+      const isTypesetInPeriod = isDateInPeriod(
+        q.typesettime || q.createdat,
+        selectedMonth,
+        selectedYear
+      )
       if (
         isStepDone(q.typesetstatus) &&
         q.typesettername &&
         q.typesetstatus !== "Skipped" &&
-        q.typesetstatus !== "ข้าม"
+        q.typesetstatus !== "ข้าม" &&
+        isTypesetInPeriod
       ) {
         const member = getOrCreateMember(q.typesettername)
         const isSpecial = member.name
@@ -320,22 +358,28 @@ export function ExpensesView({
       const rowTotal =
         rowUploadCost + rowExtractCost + rowTranslateCost + rowTypesetCost
 
-      chapPayrolls.push({
-        queueid: q.queueid,
-        createdat: q.createdat,
-        mangaName,
-        chapter: q.chapter,
-        chapterCount: count,
-        uploader: q.uploadername || "-",
-        uploadCost: rowUploadCost,
-        extractor: q.extractorname || "-",
-        extractCost: rowExtractCost,
-        translator: q.translatorname || "-",
-        translateCost: rowTranslateCost,
-        typesetter: q.typesettername || "-",
-        typesetCost: rowTypesetCost,
-        totalCost: rowTotal,
-      })
+      // Only add to chapter payroll breakdown if there was activity in this period
+      if (
+        rowTotal > 0 ||
+        (selectedMonth === "all" && selectedYear === "all")
+      ) {
+        chapPayrolls.push({
+          queueid: q.queueid,
+          createdat: q.createdat,
+          mangaName,
+          chapter: q.chapter,
+          chapterCount: count,
+          uploader: rowUploadCost > 0 ? q.uploadername || "-" : "-",
+          uploadCost: rowUploadCost,
+          extractor: rowExtractCost > 0 ? q.extractorname || "-" : "-",
+          extractCost: rowExtractCost,
+          translator: rowTranslateCost > 0 ? q.translatorname || "-" : "-",
+          translateCost: rowTranslateCost,
+          typesetter: rowTypesetCost > 0 ? q.typesettername || "-" : "-",
+          typesetCost: rowTypesetCost,
+          totalCost: rowTotal,
+        })
+      }
     })
 
     // Compute totalCost per member
@@ -348,10 +392,10 @@ export function ExpensesView({
         m.supportCost
     })
 
-    // Convert to sorted array (highest earner first)
-    const payrollArray = Array.from(membersMap.values()).sort(
-      (a, b) => b.totalCost - a.totalCost
-    )
+    // Convert to sorted array (exclude members with 0 cost in this month)
+    const payrollArray = Array.from(membersMap.values())
+      .filter((m) => m.totalCost > 0)
+      .sort((a, b) => b.totalCost - a.totalCost)
 
     const grandTotalCost =
       totalUploadCost +
@@ -376,7 +420,15 @@ export function ExpensesView({
         grandTotalCost,
       },
     }
-  }, [filteredQueue, mangaList, rates])
+  }, [
+    queueItems,
+    selectedMonth,
+    selectedYear,
+    workStatusFilter,
+    mangaList,
+    rates,
+    isDateInPeriod,
+  ])
 
   // Doughnut Chart Data (by step)
   const stepChartData = React.useMemo(() => {
@@ -582,10 +634,36 @@ export function ExpensesView({
               ))}
             </select>
 
+            <select
+              className="h-9 rounded-lg border border-[#26334d] bg-[#0b1120] px-3 text-sm text-slate-100 font-medium"
+              value={workStatusFilter}
+              onChange={(e) =>
+                setWorkStatusFilter(e.target.value as "all" | "completed" | "incomplete")
+              }
+              title="กรองตามสถานะงานของตอน"
+            >
+              <option value="all">สถานะตอน: ทุกสถานะ (ทุกงานที่เสร็จในเดือน)</option>
+              <option value="completed">เฉพาะตอนที่โพสต์เสร็จแล้ว</option>
+              <option value="incomplete">เฉพาะตอนที่ยังโพสต์ไม่เสร็จ (กำลังทำ)</option>
+            </select>
+
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-9 w-9 shrink-0 text-slate-300 hover:text-white"
+              onClick={fetchQueueData}
+              disabled={loadingQueue}
+              title="ดึงข้อมูลคิวงานล่าสุดจากคลาวด์"
+            >
+              <RefreshCw
+                className={`h-4 w-4 ${loadingQueue ? "animate-spin text-amber-400" : ""}`}
+              />
+            </Button>
+
             {loadingQueue && (
               <span className="text-xs text-amber-400 animate-pulse flex items-center gap-1">
                 <span className="h-2 w-2 rounded-full bg-amber-400 animate-ping" />
-                กำลังคำนวณ...
+                กำลังโหลดข้อมูล...
               </span>
             )}
           </div>
