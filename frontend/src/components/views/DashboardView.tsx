@@ -8,6 +8,7 @@ import {
   getQueueCurrentStep,
   getQueueItemDate,
   getThaiDayName,
+  isStepDone,
   isUrgentManga,
   parseQueueDate,
   timeSince,
@@ -20,6 +21,7 @@ import {
   Calendar as CalendarIcon,
   RefreshCw,
   ClipboardList,
+  Send,
 } from "lucide-react"
 
 interface DashboardViewProps {
@@ -46,31 +48,47 @@ export function DashboardView({
   // Stats calculation
   const stats = React.useMemo(() => {
     const totalSeries = mangaList.length
-    const activeQueue = queueList.filter((q) => q.poststatus !== "เสร็จแล้ว")
-    const pendingSeries = activeQueue.length
 
-    const sevenDaysAgo = new Date()
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
-    let finishedThisWeek = 0
+    // คิวงานที่ค้างอยู่: คำนวณเฉพาะ งานแปล+ลงคำ = 1
+    // (คิวงานที่ยังแปลหรือลงคำไม่เสร็จ โดยงานแปล+ลงคำนับเป็น 1 ตอน/คิว ไม่นับซ้ำ 2 ครั้ง)
+    let pendingTranslateAndTypeset = 0
+    const activeQueue: any[] = []
     queueList.forEach((q) => {
-      const qd = getQueueItemDate(q)
-      if (q.poststatus === "เสร็จแล้ว" && qd && qd >= sevenDaysAgo) {
-        finishedThisWeek += getChapterCount(q.chapter)
+      if (isStepDone(q.poststatus)) return
+      activeQueue.push(q)
+      const transDone = isStepDone(q.translatestatus)
+      const typesetDone = isStepDone(q.typesetstatus)
+      if (!transDone || !typesetDone) {
+        pendingTranslateAndTypeset += getChapterCount(q.chapter)
       }
     })
 
-    const todayDay = getThaiDayName(now)
-    const releasedToday = mangaList.filter(
-      (m) =>
-        m.status === "Ongoing" &&
-        m.releaseday &&
-        String(m.releaseday)
-          .split(",")
-          .map((d: string) => d.trim())
-          .includes(todayDay)
-    ).length
+    // โพสต์แล้ว: งานที่ขั้นตอนโพสต์เสร็จสิ้นทั้งหมดในระบบ
+    let postedTotal = 0
+    queueList.forEach((q) => {
+      if (isStepDone(q.poststatus)) {
+        postedTotal += getChapterCount(q.chapter)
+      }
+    })
 
-    return { totalSeries, pendingSeries, finishedThisWeek, releasedToday, activeQueue }
+    // งานที่อยู่ในขั้นตอนสถานะรอโพสต์: ตรวจ/ลงเว็บเสร็จแล้ว รอโพสต์
+    let waitPostCount = 0
+    queueList.forEach((q) => {
+      if (isStepDone(q.poststatus)) return
+      const postSt = String(q.poststatus || "").trim()
+      const isPublishDone = isStepDone(q.publishstatus)
+      if (isPublishDone || postSt === "กำลังทำ") {
+        waitPostCount += getChapterCount(q.chapter)
+      }
+    })
+
+    return {
+      totalSeries,
+      pendingTranslateAndTypeset,
+      postedTotal,
+      waitPostCount,
+      activeQueue,
+    }
   }, [mangaList, queueList])
 
   // Calendar calculation
@@ -196,7 +214,8 @@ export function DashboardView({
 
         <Card
           onClick={() => onSwitchToQueue()}
-          className="p-5 flex items-center justify-between cursor-pointer hover:border-indigo-500/50 transition-colors"
+          className="p-5 flex items-center justify-between cursor-pointer hover:border-amber-500/50 transition-colors"
+          title="คลิกเพื่อไปที่หน้ารายการคิวงาน"
         >
           <div>
             <p className="text-xs font-medium text-slate-400">คิวงานที่ค้างอยู่</p>
@@ -204,46 +223,59 @@ export function DashboardView({
               <Skeleton className="h-8 w-16 mt-1" />
             ) : (
               <p className="text-2xl font-bold text-amber-300 mt-1">
-                {stats.pendingSeries}
+                {stats.pendingTranslateAndTypeset}
               </p>
             )}
+            <p className="text-[11px] text-slate-500 mt-0.5">งานแปล + ลงคำ</p>
           </div>
           <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-amber-500/20 text-amber-400">
             <Clock className="h-6 w-6" />
           </div>
         </Card>
 
-        <Card className="p-5 flex items-center justify-between">
+        <Card
+          onClick={() => onSwitchToQueue()}
+          className="p-5 flex items-center justify-between cursor-pointer hover:border-emerald-500/50 transition-colors"
+          title="คลิกเพื่อไปที่หน้ารายการคิวงาน"
+        >
           <div>
-            <p className="text-xs font-medium text-slate-400">
-              เสร็จแล้วในสัปดาห์นี้
-            </p>
+            <p className="text-xs font-medium text-slate-400">โพสต์แล้ว</p>
             {isLoading ? (
               <Skeleton className="h-8 w-16 mt-1" />
             ) : (
               <p className="text-2xl font-bold text-emerald-400 mt-1">
-                {stats.finishedThisWeek}
+                {stats.postedTotal}
               </p>
             )}
+            <p className="text-[11px] text-slate-500 mt-0.5">เสร็จสิ้นในระบบ</p>
           </div>
           <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-500/20 text-emerald-400">
             <CheckCircle2 className="h-6 w-6" />
           </div>
         </Card>
 
-        <Card className="p-5 flex items-center justify-between">
+        <Card
+          onClick={() => onSwitchToQueue()}
+          className="p-5 flex items-center justify-between cursor-pointer hover:border-sky-500/50 transition-colors"
+          title="คลิกเพื่อไปที่หน้ารายการคิวงาน (งานสถานะรอโพสต์)"
+        >
           <div>
-            <p className="text-xs font-medium text-slate-400">ควรปล่อยวันนี้</p>
+            <p className="text-xs font-medium text-slate-400">
+              งานสถานะรอโพสต์
+            </p>
             {isLoading ? (
               <Skeleton className="h-8 w-16 mt-1" />
             ) : (
-              <p className="text-2xl font-bold text-red-400 mt-1">
-                {stats.releasedToday}
+              <p className="text-2xl font-bold text-sky-400 mt-1">
+                {stats.waitPostCount}
               </p>
             )}
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              ตรวจ/ลงเว็บเสร็จแล้ว รอโพสต์
+            </p>
           </div>
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-red-500/20 text-red-400">
-            <Flame className="h-6 w-6" />
+          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-sky-500/20 text-sky-400">
+            <Send className="h-6 w-6" />
           </div>
         </Card>
       </div>
