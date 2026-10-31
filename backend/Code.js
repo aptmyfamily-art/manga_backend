@@ -771,17 +771,13 @@ function getWorkQueue(forceRefresh = false, month = 'all', year = 'all', include
       if (mStr === 'all' && yStr === 'all') {
         results.push(obj);
       } else {
-        if (includeIncomplete && obj.poststatus !== 'เสร็จแล้ว') {
+        if (!obj.createdat) continue;
+        const d = new Date(obj.createdat);
+        if (isNaN(d.getTime())) continue;
+        const mMatch = mStr === 'all' || String(d.getMonth() + 1) === mStr;
+        const yMatch = yStr === 'all' || String(d.getFullYear()) === yStr;
+        if (mMatch && yMatch) {
           results.push(obj);
-        } else if (obj.createdat) {
-          const d = new Date(obj.createdat);
-          if (!isNaN(d.getTime())) {
-            const mMatch = mStr === 'all' || String(d.getMonth() + 1) === mStr;
-            const yMatch = yStr === 'all' || String(d.getFullYear()) === yStr;
-            if (mMatch && yMatch) {
-              results.push(obj);
-            }
-          }
         }
       }
     }
@@ -1750,7 +1746,7 @@ function getDashboardData(forceRefresh = false, month, year) {
   const targetYear = year !== undefined && year !== null && year !== '' ? year : String(now.getFullYear());
   return {
     manga: getMangaList(),
-    queue: getWorkQueue(forceRefresh, targetMonth, targetYear, true),
+    queue: getWorkQueue(forceRefresh, targetMonth, targetYear, false),
     team: getTeamMembers()
   };
 }

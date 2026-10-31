@@ -88,50 +88,38 @@ export default function App() {
   const [queueYear, setQueueYear] = React.useState<string>(
     String(nowInit.getFullYear())
   )
+  const [fetchingPeriod, setFetchingPeriod] = React.useState(false)
 
-  // 1. Core Data: Manga List (Direct query, cached in browser memory)
-  const {
-    data: mangaList = [],
-    isLoading: loadingManga,
-    refetch: refetchManga,
-  } = useQuery<any[]>({
-    queryKey: ["mangaList", passcode],
-    queryFn: () => callGasApi("GET_MANGA_LIST"),
-    enabled: Boolean(passcode),
-    staleTime: 5 * 60 * 1000,
-  })
+  // In-memory state for fast dynamic reactivity
+  const [mangaList, setMangaList] = React.useState<any[]>([])
+  const [teamList, setTeamList] = React.useState<any[]>([])
+  const [queueList, setQueueList] = React.useState<any[]>([])
 
-  // 2. Core Data: Team Members (Direct query, cached in browser memory)
+  // 1. Single Unified Initial Boot Query (1 single GAS call = 1 V8 container, 1 openById, ZERO concurrency lock contention!)
   const {
-    data: teamList = [],
-    isLoading: loadingTeam,
-    refetch: refetchTeam,
-  } = useQuery<any[]>({
-    queryKey: ["teamList", passcode],
-    queryFn: () => callGasApi("GET_TEAM_MEMBERS"),
-    enabled: Boolean(passcode),
-    staleTime: 5 * 60 * 1000,
-  })
-
-  // 3. Queue Data: Work Queue (Direct query by selected month/year)
-  const {
-    data: queueList = [],
-    isLoading: loadingQueue,
-    isFetching: fetchingQueue,
-    refetch: refetchQueue,
-  } = useQuery<any[]>({
-    queryKey: ["workQueue", passcode, queueMonth, queueYear],
-    queryFn: () =>
-      callGasApi("GET_WORK_QUEUE", {
+    data: initialData,
+    isLoading: loadingInitial,
+    isFetching: fetchingInitial,
+    refetch: refetchInitial,
+  } = useQuery({
+    queryKey: ["initialDashboardData", passcode],
+    queryFn: async () => {
+      const res = await callGasApi("GET_DASHBOARD_DATA", {
         month: queueMonth,
         year: queueYear,
-        includeIncomplete: true,
-      }),
+      })
+      if (res) {
+        if (Array.isArray(res.manga)) setMangaList(res.manga)
+        if (Array.isArray(res.team)) setTeamList(res.team)
+        if (Array.isArray(res.queue)) setQueueList(res.queue)
+      }
+      return res
+    },
     enabled: Boolean(passcode),
-    staleTime: 60 * 1000,
+    staleTime: 5 * 60 * 1000,
   })
 
-  // 4. On-Demand Data: Financials (Only fetched when opening Financials view)
+  // 2. On-Demand Data: Financials (Only fetched when user unlocks/opens Financials view)
   const {
     data: financialData,
     isLoading: loadingFinancials,
@@ -144,7 +132,7 @@ export default function App() {
     staleTime: 3 * 60 * 1000,
   })
 
-  // 5. On-Demand Data: Budget (Only fetched when opening Budget view)
+  // 3. On-Demand Data: Budget (Only fetched when user unlocks/opens Budget view)
   const {
     data: budgetData,
     isLoading: loadingBudget,
@@ -173,15 +161,30 @@ export default function App() {
     : []
 
   const isBusyFetching =
-    loadingManga ||
-    loadingTeam ||
-    fetchingQueue ||
+    loadingInitial ||
+    fetchingInitial ||
+    fetchingPeriod ||
     (activeView === "financials" && (loadingFinancials || fetchingFinancials)) ||
     (activeView === "budget" && (loadingBudget || fetchingBudget))
 
-  const handleQueuePeriodChange = (newMonth: string, newYear: string) => {
+  const handleQueuePeriodChange = async (newMonth: string, newYear: string) => {
     setQueueMonth(newMonth)
     setQueueYear(newYear)
+    setFetchingPeriod(true)
+    try {
+      const res = await callGasApi("GET_WORK_QUEUE", {
+        month: newMonth,
+        year: newYear,
+        includeIncomplete: false,
+      })
+      if (Array.isArray(res)) {
+        setQueueList(res)
+      }
+    } catch (err: any) {
+      toast.error(err.message || "ดึงข้อมูลคิวงานไม่สำเร็จ")
+    } finally {
+      setFetchingPeriod(false)
+    }
   }
 
   const handleManualRefresh = async () => {
@@ -193,10 +196,16 @@ export default function App() {
         await refetchFinancials()
       } else if (activeView === "budget") {
         await refetchBudget()
-      } else if (activeView === "team") {
-        await refetchTeam()
       } else {
-        await Promise.all([refetchManga(), refetchQueue(), refetchTeam()])
+        const fresh = await callGasApi("GET_DASHBOARD_DATA", {
+          month: queueMonth,
+          year: queueYear,
+        })
+        if (fresh) {
+          if (Array.isArray(fresh.manga)) setMangaList(fresh.manga)
+          if (Array.isArray(fresh.team)) setTeamList(fresh.team)
+          if (Array.isArray(fresh.queue)) setQueueList(fresh.queue)
+        }
       }
       toast.success("อัปเดตข้อมูลล่าสุดเรียบร้อยแล้ว", { id: "manual-refresh" })
     } catch (err: any) {
@@ -211,18 +220,15 @@ export default function App() {
   }
 
   const updateQueueCache = (newQueue: any[]) => {
-    queryClient.setQueryData(
-      ["workQueue", passcode, queueMonth, queueYear],
-      newQueue
-    )
+    setQueueList(newQueue)
   }
 
   const updateMangaCache = (newManga: any[]) => {
-    queryClient.setQueryData(["mangaList", passcode], newManga)
+    setMangaList(newManga)
   }
 
   const updateTeamCache = (newTeam: any[]) => {
-    queryClient.setQueryData(["teamList", passcode], newTeam)
+    setTeamList(newTeam)
   }
 
   const handleNavClick = (view: ViewKey) => {
@@ -409,7 +415,7 @@ export default function App() {
             <DashboardView
               mangaList={mangaList}
               queueList={queueList}
-              isLoading={loadingManga || loadingQueue}
+              isLoading={loadingInitial}
               onSwitchToQueue={(term) => {
                 if (term) setQueueSearchTerm(term)
                 setActiveView("queue")
@@ -427,7 +433,7 @@ export default function App() {
               mangaList={mangaList}
               queueList={queueList}
               teamList={teamList}
-              isLoading={loadingQueue}
+              isLoading={loadingInitial || fetchingPeriod}
               monthFilter={queueMonth}
               yearFilter={queueYear}
               onPeriodChange={handleQueuePeriodChange}
