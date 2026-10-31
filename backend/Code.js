@@ -2984,8 +2984,8 @@ function saveKuaikanAuth(payload) {
     testRes = {
       success: true,
       comicId: payload.comicId || 855368,
-      title: '第366话 真真假假',
-      topicTitle: '我！天命大反派',
+      title: payload.title || '第366话 真真假假',
+      topicTitle: payload.topicTitle || '我！天命大反派',
       imagesCount: cleanImgs.length,
       isPay: true,
       isLocked: false,
