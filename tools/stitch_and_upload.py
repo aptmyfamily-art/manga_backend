@@ -100,7 +100,7 @@ def main():
 
     data = res["data"]
     manga_thai_name = data.get("thaiTitle") or data.get("mangaName") or MANGA_NAME
-    urls = data.get("allImages") or data.get("sampleImages") or []
+    urls = data.get("imageDetails") or data.get("allImages") or data.get("sampleImages") or []
     total_images = len(urls)
     print(f"✓ พบทั้งหมด {total_images} ชิ้นภาพ (เรื่องไทย: {manga_thai_name}, ตอน: {data.get('title')})")
 
@@ -190,9 +190,10 @@ def main():
         is_last = (part_idx == total_parts - 1)
         print(f"   กำลังอัปโหลด {part_file_name} ขึ้น Google Drive...")
 
+        chapter_title = data.get("title") or CHAPTER_NAME
         upload_res = call_gas("UPLOAD_CHAPTER_STITCHED_PART", {
             "mangaName": manga_thai_name,
-            "chapter": CHAPTER_NAME,
+            "chapter": chapter_title,
             "partIndex": part_num,
             "totalParts": total_parts,
             "fileName": part_file_name,
