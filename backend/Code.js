@@ -11,7 +11,7 @@ const BUDGET_PAYEE_SHEET_NAME = 'BudgetPayees';
 const BUDGET_TRANSACTION_SHEET_NAME = 'BudgetTransactions';
 const MANGA_SALES_SHEET_NAME = 'MangaSales';
 const WEBSITE_SHEET_NAME = 'Websites';
-const ACCESS_PASSCODE = '720102';
+const ACCESS_PASSCODE = '10211032';
 const RAW_TRACKER_SHEET_NAME = 'RawTracker';
 
 // --- TELEGRAM CONFIGURATION ---
