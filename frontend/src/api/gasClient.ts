@@ -1,5 +1,5 @@
 export const DEFAULT_GAS_URL =
-  "https://script.google.com/macros/s/AKfycbzCPzi4OLLS9_bop6ZxNbLzEsAi8peXWXmlhzq8hanSDUPUVVHmbzfzFIE48-hUYw_beg/exec"
+  "https://script.google.com/macros/s/AKfycbyKoJcWJ9OeqGRM3h4XGZNdOaoY5JMCROBSJXb7cj_9I2h4FLk_eTuWnD9sYoVMWjRa2g/exec"
 
 const STORAGE_PASSCODE_KEY = "mangahub_passcode"
 const STORAGE_GAS_URL_KEY = "mangahub_gas_url"

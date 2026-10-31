@@ -49,6 +49,7 @@ import {
   List,
   Flame,
   ArrowUpDown,
+  QrCode,
 } from "lucide-react"
 
 export interface RawTrackerItem {
@@ -69,11 +70,13 @@ export interface RawTrackerItem {
 interface RawTrackerViewProps {
   mangaList: any[]
   onOpenAddQueueWithManga: (mangaId: string, nextChapter?: string) => void
+  onOpenKuaikanModal?: () => void
 }
 
 export function RawTrackerView({
   mangaList,
   onOpenAddQueueWithManga,
+  onOpenKuaikanModal,
 }: RawTrackerViewProps) {
   const queryClient = useQueryClient()
   const [search, setSearch] = React.useState("")
@@ -648,6 +651,19 @@ export function RawTrackerView({
             <Clock className="h-4 w-4 mr-1.5 text-amber-400" />
             ตั้งตรวจทุก 1 ชม.
           </Button>
+
+          {onOpenKuaikanModal && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onOpenKuaikanModal}
+              className="h-9 border-amber-500/40 bg-amber-950/20 hover:bg-amber-900/30 text-amber-300 shadow-xs"
+              title="เชื่อมต่อบัญชี KuaiKan VIP ผ่าน WeChat QR เพื่อปลดล็อคและโหลดตอนล่าสุด"
+            >
+              <QrCode className="h-4 w-4 mr-1.5 text-amber-400" />
+              KuaiKan VIP (WeChat QR)
+            </Button>
+          )}
 
           <Button
             size="sm"

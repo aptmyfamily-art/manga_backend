@@ -286,6 +286,29 @@ function doPost(e) {
         result = setupHourlyTrackerTrigger();
         break;
 
+      // --- KUAIKAN VIP & WECHAT AUTH ---
+      case 'GET_KUAIKAN_QR':
+        result = getKuaikanQrSession();
+        break;
+      case 'CHECK_KUAIKAN_QR':
+        result = checkKuaikanQrStatus(payload);
+        break;
+      case 'SAVE_KUAIKAN_AUTH':
+        result = saveKuaikanAuth(payload);
+        break;
+      case 'GET_KUAIKAN_AUTH':
+        result = getKuaikanAuthStatus();
+        break;
+      case 'CLEAR_KUAIKAN_AUTH':
+        result = clearKuaikanAuth();
+        break;
+      case 'TEST_KUAIKAN_CHAPTER':
+        result = testKuaikanLatestChapter(payload ? payload.comicId : null);
+        break;
+      case 'DOWNLOAD_KUAIKAN_CHAPTER':
+        result = downloadKuaikanChapterToDrive(payload);
+        break;
+
       default:
         return createJsonResponse({ status: 'error', message: 'Unknown action: ' + action });
     }
@@ -2739,4 +2762,374 @@ function setupHourlyTrackerTrigger() {
 
 function hourlyRawTrackerJob() {
   checkAllRawTrackers(true);
+}
+
+// ==========================================
+// KUAIKAN MANHUA (快看漫画) VIP & WECHAT AUTH
+// ==========================================
+
+const KUAIKAN_PROP_KEY = 'KUAIKAN_SESSION';
+
+function getKuaikanSessionData() {
+  try {
+    const raw = PropertiesService.getScriptProperties().getProperty(KUAIKAN_PROP_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    console.error('getKuaikanSessionData error:', e);
+    return null;
+  }
+}
+
+function getKuaikanAuthStatus() {
+  const session = getKuaikanSessionData();
+  if (!session || !session.cookie) {
+    return {
+      loggedIn: false,
+      message: 'ยังไม่ได้เชื่อมต่อบัญชี KuaiKan'
+    };
+  }
+
+  return {
+    loggedIn: true,
+    updatedAt: session.updatedAt || '',
+    isVip: Boolean(session.isVip),
+    user: session.user || null,
+    cookiePreview: session.cookie.substring(0, 20) + '...'
+  };
+}
+
+function clearKuaikanAuth() {
+  PropertiesService.getScriptProperties().deleteProperty(KUAIKAN_PROP_KEY);
+  return { success: true, message: 'ลบการเชื่อมต่อบัญชี KuaiKan เรียบร้อยแล้ว' };
+}
+
+/**
+ * สร้าง WeChat QR Session จาก KuaiKan Web Login
+ */
+function getKuaikanQrSession() {
+  try {
+    const initUrl = 'https://www.kuaikanmanhua.com/v1/passport/login/pc/user_wechat_login?redirect_uri=' + 
+      encodeURIComponent('https://www.kuaikanmanhua.com/webs/loginh') + '&mini_id=pckuaikan:0';
+    
+    const initRes = UrlFetchApp.fetch(initUrl, {
+      method: 'get',
+      followRedirects: false,
+      muteHttpExceptions: true,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
+
+    const headers = initRes.getAllHeaders();
+    let loc = headers['Location'] || headers['location'];
+    if (Array.isArray(loc)) loc = loc[0];
+
+    let rawCookies = headers['Set-Cookie'] || headers['set-cookie'] || [];
+    if (typeof rawCookies === 'string') rawCookies = [rawCookies];
+    const cookies = rawCookies.map(function(c) { return c.split(';')[0].trim(); });
+
+    if (!loc) {
+      return { error: 'ไม่สามารถดึง Login URL จาก Kuaikan ได้' };
+    }
+
+    const stateMatch = loc.match(/state=([a-zA-Z0-9_\-]+)/);
+    const state = stateMatch ? stateMatch[1] : '';
+
+    const qrPageRes = UrlFetchApp.fetch(loc, {
+      method: 'get',
+      muteHttpExceptions: true,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
+
+    const pageHtml = qrPageRes.getContentText();
+    const uuidMatch = pageHtml.match(/\/connect\/qrcode\/([a-zA-Z0-9_\-]+)/) || pageHtml.match(/uuid=([a-zA-Z0-9_\-]+)/);
+    const uuid = uuidMatch ? uuidMatch[1] : '';
+
+    if (!uuid) {
+      return { error: 'ไม่สามารถสกัด WeChat QR UUID ได้' };
+    }
+
+    return {
+      success: true,
+      uuid: uuid,
+      state: state,
+      cookies: cookies,
+      qrUrl: 'https://open.weixin.qq.com/connect/qrcode/' + uuid
+    };
+  } catch (err) {
+    console.error('getKuaikanQrSession error:', err);
+    return { error: 'เกิดข้อผิดพลาดในการสร้าง QR Code: ' + err.toString() };
+  }
+}
+
+/**
+ * ตรวจสอบสถานะการสแกน QR Code (Polling WeChat)
+ */
+function checkKuaikanQrStatus(payload) {
+  if (!payload || !payload.uuid) {
+    return { error: 'Missing uuid' };
+  }
+
+  try {
+    const pollUrl = 'https://long.open.weixin.qq.com/connect/l/qrconnect?uuid=' + payload.uuid + '&_=' + new Date().getTime();
+    const pollRes = UrlFetchApp.fetch(pollUrl, {
+      method: 'get',
+      muteHttpExceptions: true,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
+
+    const text = pollRes.getContentText();
+    
+    if (text.indexOf('408') !== -1) {
+      return { status: 'waiting', message: 'รอการสแกน QR Code' };
+    }
+    if (text.indexOf('404') !== -1) {
+      return { status: 'scanned', message: 'สแกนสำเร็จแล้ว กรุณากดยืนยันบน WeChat ในมือถือของคุณ' };
+    }
+    if (text.indexOf('405') !== -1) {
+      const codeMatch = text.match(/wx_code\s*=\s*['"]([^'"]+)['"]/);
+      const wxCode = codeMatch ? codeMatch[1] : '';
+      if (!wxCode) {
+        return { error: 'ยืนยันแล้วแต่ไม่พบ WeChat code' };
+      }
+
+      // ทำการแลก session ทันที
+      return saveKuaikanAuth({
+        code: wxCode,
+        state: payload.state,
+        cookies: payload.cookies || []
+      });
+    }
+    if (text.indexOf('402') !== -1) {
+      return { status: 'expired', message: 'QR Code หมดอายุ กรุณารีเฟรชเพื่อสแกนใหม่' };
+    }
+    if (text.indexOf('403') !== -1) {
+      return { status: 'cancelled', message: 'ยกเลิกการเข้าสู่ระบบบนมือถือ' };
+    }
+
+    return { status: 'unknown', text: text.substring(0, 100) };
+  } catch (e) {
+    console.error('checkKuaikanQrStatus error:', e);
+    return { error: e.toString() };
+  }
+}
+
+/**
+ * บันทึก Auth KuaiKan (จาก WeChat Code หรือกรอก Cookie ตรง)
+ */
+function saveKuaikanAuth(payload) {
+  let cookieHeader = '';
+
+  if (payload.directCookie && payload.directCookie.trim()) {
+    cookieHeader = payload.directCookie.trim();
+  } else if (payload.code && payload.state) {
+    const cookies = payload.cookies || [];
+    const checkUrl = 'https://www.kuaikanmanhua.com/v1/passport/login/pc/user_wechat_login_check?code=' + 
+      encodeURIComponent(payload.code) + '&state=' + encodeURIComponent(payload.state);
+    
+    const res = UrlFetchApp.fetch(checkUrl, {
+      method: 'get',
+      followRedirects: false,
+      muteHttpExceptions: true,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Cookie': cookies.join('; ')
+      }
+    });
+
+    const headers = res.getAllHeaders();
+    let setCookies = headers['Set-Cookie'] || headers['set-cookie'] || [];
+    if (typeof setCookies === 'string') setCookies = [setCookies];
+
+    const allCookieParts = [].concat(cookies);
+    setCookies.forEach(function(sc) {
+      const part = sc.split(';')[0].trim();
+      allCookieParts.push(part);
+    });
+    cookieHeader = allCookieParts.join('; ');
+  }
+
+  if (!cookieHeader) {
+    return { error: 'ไม่มี Cookie หรือ Session สำหรับบันทึก' };
+  }
+
+  // ทดสอบความถูกต้องและสิทธิ์ VIP
+  const testRes = testKuaikanLatestChapter(null, cookieHeader);
+
+  const sessionData = {
+    cookie: cookieHeader,
+    updatedAt: new Date().toISOString(),
+    isVip: Boolean(testRes && testRes.imagesCount > 1),
+    test: testRes
+  };
+
+  PropertiesService.getScriptProperties().setProperty(KUAIKAN_PROP_KEY, JSON.stringify(sessionData));
+
+  return {
+    status: 'success',
+    success: true,
+    message: 'เข้าสู่ระบบและบันทึก Session KuaiKan เรียบร้อยแล้ว',
+    session: {
+      updatedAt: sessionData.updatedAt,
+      isVip: sessionData.isVip,
+      cookiePreview: cookieHeader.substring(0, 20) + '...'
+    },
+    test: testRes
+  };
+}
+
+/**
+ * ทดสอบดึงข้อมูลตอนล่าสุดเพื่อเช็ค VIP และภาพที่ปลดล็อค
+ */
+function testKuaikanLatestChapter(comicId, overrideCookie) {
+  try {
+    const targetComicId = comicId || 855368; // Chapter 366
+    let cookie = overrideCookie;
+    if (!cookie) {
+      const session = getKuaikanSessionData();
+      cookie = session ? session.cookie : '';
+    }
+
+    const url = 'https://api.kkmh.com/v2/comic/' + targetComicId + '?is_preview=0';
+    const res = UrlFetchApp.fetch(url, {
+      method: 'get',
+      muteHttpExceptions: true,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Cookie': cookie || ''
+      }
+    });
+
+    const data = JSON.parse(res.getContentText());
+    if (data && data.data) {
+      const comic = data.data;
+      const rawImages = comic.comic_images || comic.images || [];
+      const imagesCount = rawImages.length;
+      const isPay = Boolean(comic.selling_kk_currency);
+      const isLocked = imagesCount <= 1; // placeholder only
+      const sampleImages = rawImages.slice(0, 3).map(function(img) {
+        return typeof img === 'string' ? img : (img.url1280 || img.url);
+      });
+
+      return {
+        success: true,
+        comicId: targetComicId,
+        title: comic.title || '',
+        topicTitle: comic.topic ? comic.topic.title : '',
+        imagesCount: imagesCount,
+        isPay: isPay,
+        isLocked: isLocked,
+        isVipUnlocked: !isLocked,
+        isLogin: comic.is_login || false,
+        sampleImages: sampleImages
+      };
+    }
+    return { success: false, error: data.message || 'ไม่สามารถดึงข้อมูลตอนได้' };
+  } catch (e) {
+    console.error('testKuaikanLatestChapter error:', e);
+    return { success: false, error: e.toString() };
+  }
+}
+
+/**
+ * ดาวน์โหลดตอนจาก KuaiKan ลง Google Drive และเพิ่มเข้าคิวงาน
+ */
+function downloadKuaikanChapterToDrive(payload) {
+  try {
+    const comicId = (payload && payload.comicId) || 855368;
+    const mangaId = (payload && payload.mangaId) || '';
+    const chapter = (payload && payload.chapter) || '';
+    const mangaName = (payload && payload.mangaName) || '我！天命大反派';
+
+    const session = getKuaikanSessionData();
+    const cookieHeader = session ? session.cookie : '';
+
+    const url = 'https://api.kkmh.com/v2/comic/' + comicId + '?is_preview=0';
+    const res = UrlFetchApp.fetch(url, {
+      method: 'get',
+      muteHttpExceptions: true,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Cookie': cookieHeader
+      }
+    });
+
+    const data = JSON.parse(res.getContentText());
+    if (!data || !data.data) {
+      return { error: 'ไม่สามารถดึงข้อมูลตอนได้: ' + (data ? data.message : 'Unknown') };
+    }
+
+    const comic = data.data;
+    const rawImages = comic.comic_images || comic.images || [];
+    if (rawImages.length <= 1) {
+      return { error: 'ไม่พบภาพต้นฉบับ หรือตอนยังถูกล็อคอยู่ (VIP ยังไม่ active)' };
+    }
+
+    // 1. Google Drive Folder
+    let rootFolder;
+    const rootFolders = DriveApp.getFoldersByName('Manga_Raws');
+    if (rootFolders.hasNext()) {
+      rootFolder = rootFolders.next();
+    } else {
+      rootFolder = DriveApp.createFolder('Manga_Raws');
+    }
+
+    const folderName = (mangaName || 'Manga') + '_ตอนที่_' + (chapter || comic.title);
+    const targetFolder = rootFolder.createFolder(folderName);
+    const folderUrl = targetFolder.getUrl();
+
+    // 2. Download Images (download first batch up to 30 to prevent GAS timeout)
+    const downloadLimit = Math.min(rawImages.length, 30);
+    let downloadedCount = 0;
+
+    for (let i = 0; i < downloadLimit; i++) {
+      const imgItem = rawImages[i];
+      const imgUrl = typeof imgItem === 'string' ? imgItem : (imgItem.url1280 || imgItem.url);
+      if (!imgUrl) continue;
+
+      try {
+        const imgRes = UrlFetchApp.fetch(imgUrl, {
+          headers: { 'Referer': 'https://www.kuaikanmanhua.com/' },
+          muteHttpExceptions: true
+        });
+        const blob = imgRes.getBlob();
+        const ext = imgUrl.indexOf('.webp') !== -1 ? '.webp' : (imgUrl.indexOf('.png') !== -1 ? '.png' : '.jpg');
+        const filename = String(i + 1).padStart(3, '0') + ext;
+        blob.setName(filename);
+        targetFolder.createFile(blob);
+        downloadedCount++;
+      } catch (err) {
+        console.error('Image download error at ' + i + ':', err);
+      }
+    }
+
+    // 3. Auto add to Queue
+    let queueRes = null;
+    if (mangaId) {
+      queueRes = addQueue({
+        mangaid: mangaId,
+        chapter: chapter || '366',
+        uploadstatus: 'Done',
+        worklink: folderUrl,
+        note: 'Auto KuaiKan VIP DL (ตอน: ' + comic.title + ')'
+      });
+    }
+
+    return {
+      success: true,
+      comicId: comicId,
+      title: comic.title,
+      totalImages: rawImages.length,
+      downloadedCount: downloadedCount,
+      folderUrl: folderUrl,
+      queueAdded: Boolean(queueRes)
+    };
+  } catch (err) {
+    console.error('downloadKuaikanChapterToDrive error:', err);
+    return { error: err.toString() };
+  }
 }

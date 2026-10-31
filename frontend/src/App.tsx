@@ -16,6 +16,7 @@ import { FinancialsView } from "@/components/views/FinancialsView"
 import { BudgetView } from "@/components/views/BudgetView"
 import { MangaSettingsView } from "@/components/views/MangaSettingsView"
 import { MangaModal } from "@/components/modals/MangaModal"
+import { KuaiKanLoginModal } from "@/components/modals/KuaiKanLoginModal"
 import {
   AddQueueModal,
   UpdateQueueModal,
@@ -45,6 +46,7 @@ import {
   BookOpen,
   Lock,
   Radio,
+  QrCode,
 } from "lucide-react"
 
 type ViewKey =
@@ -127,6 +129,7 @@ export default function App() {
   const [editingQueueItem, setEditingQueueItem] = React.useState<any | null>(
     null
   )
+  const [kuaikanModalOpen, setKuaikanModalOpen] = React.useState(false)
 
   // Queue period filter (controls which month/year is fetched from GAS)
   const nowInit = React.useMemo(() => new Date(), [])
@@ -466,6 +469,17 @@ export default function App() {
 
             <Button
               variant="outline"
+              size="sm"
+              onClick={() => setKuaikanModalOpen(true)}
+              className="border-amber-500/40 bg-amber-950/20 text-amber-300 hover:bg-amber-900/30 gap-1.5 text-xs font-semibold shadow-xs"
+              title="เชื่อมต่อบัญชี KuaiKan VIP ผ่าน WeChat QR"
+            >
+              <QrCode className="h-3.5 w-3.5 text-amber-400" />
+              <span className="hidden sm:inline">KuaiKan VIP</span>
+            </Button>
+
+            <Button
+              variant="outline"
               size="icon"
               onClick={handleManualRefresh}
               disabled={isBusyFetching}
@@ -529,6 +543,7 @@ export default function App() {
                 setPreselectedQueueChapter(nextChap || "")
                 setAddQueueOpen(true)
               }}
+              onOpenKuaikanModal={() => setKuaikanModalOpen(true)}
             />
           )}
 
@@ -664,6 +679,12 @@ export default function App() {
             setAddQueueOpen(true)
           }
         }}
+      />
+
+      {/* KuaiKan VIP WeChat Login Modal */}
+      <KuaiKanLoginModal
+        open={kuaikanModalOpen}
+        onClose={() => setKuaikanModalOpen(false)}
       />
 
       {/* Passcode Prompt for Financials / Budget */}
