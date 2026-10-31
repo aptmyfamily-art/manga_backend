@@ -36,6 +36,18 @@ interface KuaiKanLoginModalProps {
 const GAS_EXEC_URL =
   "https://script.google.com/macros/s/AKfycbzG1H1eBoTsF7Omfso8v23N6HidWXU4kS-yyf0xDunb2BoZgPiUYPIOO2vMLSvYWwHsnw/exec"
 
+/**
+ * แปลงลิงก์ CDN ของ KuaiKan ให้เป็น f2.kkmh.com Full HD เพื่อหลีกเลี่ยง 403 Forbidden และแสดงผลได้ 100%
+ */
+function normalizeKuaikanImageUrl(url: string): string {
+  if (!url) return ""
+  let u = String(url).trim()
+  u = u.replace(/https?:\/\/tn\d+(?:-f\d+)?\.kkmh\.com/g, "https://f2.kkmh.com")
+  u = u.replace(/-t\.w\d+\.jpg.*$/i, "")
+  u = u.replace(/-w\d+.*$/i, "")
+  return u
+}
+
 export function KuaiKanLoginModal({
   open,
   onClose,
@@ -82,14 +94,14 @@ export function KuaiKanLoginModal({
   const [downloading, setDownloading] = React.useState(false)
   const [downloadResult, setDownloadResult] = React.useState<any | null>(null)
 
-  // Bookmarklet JavaScript Code
+  // Bookmarklet JavaScript Code (รองรับดูดภาพ HD จากหน้าตัวอ่านอัตโนมัติ)
   const bookmarkletCode = React.useMemo(() => {
-    return `javascript:(function(){try{var c=document.cookie;if(!c||(!c.includes('passToken')&&!c.includes('connect.sid')&&!c.includes('uid'))){alert('⚠️ ไม่พบคุกกี้ KuaiKan กรุณาเข้าสู่ระบบบนหน้านี้ก่อนครับ');return;}var b=document.createElement('div');b.id='mgh_sync';b.style.cssText='position:fixed;top:20px;right:20px;z-index:9999999;background:#0f172a;color:#fff;border:2px solid #10b981;padding:12px 16px;border-radius:10px;font-family:sans-serif;box-shadow:0 15px 35px rgba(0,0,0,0.6);font-size:13px;display:flex;align-items:center;gap:10px;';b.innerHTML='<span style=\"font-size:20px\">⏳</span><div><b style=\"color:#34d399\">MangaHub Sync</b><div style=\"color:#94a3b8;font-size:11px\">กำลังส่ง VIP Cookie ไปยัง MangaHub...</div></div>';var p=document.getElementById('mgh_sync');if(p)p.remove();document.body.appendChild(b);var u='${GAS_EXEC_URL}';fetch(u,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({action:'SAVE_KUAIKAN_AUTH',passcode:'10211032',payload:{directCookie:c}})}).then(function(){b.style.borderColor='#10b981';b.innerHTML='<span style=\"font-size:20px\">👑</span><div><b style=\"color:#34d399\">เชื่อมต่อสำเร็จ!</b><div style=\"color:#cbd5e1;font-size:11px\">ส่ง Cookie ให้ MangaHub แล้ว สลับแท็บกลับไปได้เลย</div></div>';setTimeout(function(){b.remove();},4000);}).catch(function(e){b.style.borderColor='#ef4444';b.innerHTML='<span style=\"font-size:20px\">❌</span><div><b style=\"color:#f87171\">ส่งไม่สำเร็จ</b><div style=\"color:#cbd5e1;font-size:11px\">'+e.message+'</div></div>';setTimeout(function(){b.remove();},5000);});}catch(e){alert('Error: '+e.message);}})();`
+    return `javascript:(function(){try{var c=document.cookie;var imgs=[];try{var comp=window.$nuxt&&window.$nuxt.$route&&window.$nuxt.$route.matched&&window.$nuxt.$route.matched[0]&&window.$nuxt.$route.matched[0].instances&&window.$nuxt.$route.matched[0].instances.default;if(comp&&comp.comicInfo&&comp.comicInfo.comicImages&&comp.comicInfo.comicImages.length){imgs=comp.comicInfo.comicImages.map(function(i){return i.url||i;});}}catch(e){}if(!imgs.length){var els=document.querySelectorAll('.img-box img, .img-list img, img[data-src]');for(var i=0;i<els.length;i++){var s=els[i].getAttribute('data-src')||els[i].src;if(s&&s.indexOf('kkmh.com')!==-1&&s.indexOf('avatar')===-1&&s.indexOf('logo')===-1){if(imgs.indexOf(s)===-1)imgs.push(s);}}}var m=window.location.pathname.match(/\\/comic(?:-next)?\\/(\\d+)/);var cid=m?parseInt(m[1]):855368;var u='${GAS_EXEC_URL}';fetch(u,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({action:'SAVE_KUAIKAN_AUTH',passcode:'10211032',payload:{directCookie:c,comicId:cid,images:imgs}})}).then(function(){alert('🎉 ส่ง Session KuaiKan + ภาพ '+(imgs.length?imgs.length+' ภาพ':'')+' ให้ MangaHub สำเร็จแล้ว!');}).catch(function(e){alert('Error: '+e.message);});}catch(err){alert('Error: '+err.message);}})();`
   }, [])
 
-  // Console One-liner Code
+  // Console Code (รองรับดูดภาพ HD จากหน้าตัวอ่านอัตโนมัติ)
   const consoleCode = React.useMemo(() => {
-    return `fetch('${GAS_EXEC_URL}', {method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({action:'SAVE_KUAIKAN_AUTH',passcode:'10211032',payload:{directCookie:document.cookie}})}).then(()=>alert('👑 ส่ง KuaiKan Cookie ให้ MangaHub สำเร็จแล้ว!'));`
+    return `(()=>{try{var c=document.cookie,imgs=[];try{var comp=window.$nuxt?.$route?.matched?.[0]?.instances?.default;if(comp?.comicInfo?.comicImages?.length)imgs=comp.comicInfo.comicImages.map(i=>i.url||i);}catch(e){}if(!imgs.length){document.querySelectorAll('.img-box img, .img-list img, img[data-src]').forEach(el=>{var s=el.getAttribute('data-src')||el.src;if(s&&s.includes('kkmh.com')&&!s.includes('avatar')&&!s.includes('logo'))imgs.push(s);});}imgs=[...new Set(imgs)];var m=location.pathname.match(/\\/comic(?:-next)?\\/(\\d+)/),cid=m?parseInt(m[1]):855368;fetch('${GAS_EXEC_URL}',{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({action:'SAVE_KUAIKAN_AUTH',passcode:'10211032',payload:{directCookie:c,comicId:cid,images:imgs}})}).then(()=>alert('🎉 ส่ง Session KuaiKan + ภาพ '+(imgs.length?imgs.length+' ภาพ':'')+' ให้ MangaHub สำเร็จแล้ว!'));}catch(e){alert('Error: '+e.message);}})();`
   }, [])
 
   // Check saved session
@@ -708,7 +720,7 @@ export function KuaiKanLoginModal({
                           className="relative rounded-lg overflow-hidden border border-[#1e293b] bg-black/50 h-16 flex items-center justify-center"
                         >
                           <img
-                            src={img}
+                            src={normalizeKuaikanImageUrl(img)}
                             alt={`Sample ${idx + 1}`}
                             className="w-full h-full object-cover"
                             referrerPolicy="no-referrer"

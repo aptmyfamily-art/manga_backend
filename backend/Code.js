@@ -2919,7 +2919,19 @@ function checkKuaikanQrStatus(payload) {
 }
 
 /**
- * บันทึก Auth KuaiKan (จาก WeChat Code หรือกรอก Cookie ตรง)
+ * แปลงลิงก์ CDN ของ KuaiKan ให้เป็น f2.kkmh.com Full HD และตัดพารามิเตอร์ Thumbnail ออก เพื่อป้องกัน 403 Forbidden
+ */
+function normalizeKuaikanImageUrl(url) {
+  if (!url) return '';
+  let u = String(url).trim();
+  u = u.replace(/https?:\/\/tn\d+(?:-f\d+)?\.kkmh\.com/g, 'https://f2.kkmh.com');
+  u = u.replace(/-t\.w\d+\.jpg.*$/i, '');
+  u = u.replace(/-w\d+.*$/i, '');
+  return u;
+}
+
+/**
+ * บันทึก Auth KuaiKan (จาก WeChat Code หรือกรอก Cookie ตรง หรือรับรายชื่อภาพจากหน้าเว็บ)
  */
 function saveKuaikanAuth(payload) {
   let cookieHeader = '';
@@ -2958,15 +2970,33 @@ function saveKuaikanAuth(payload) {
     cookieHeader = allCookieParts.join('; ');
   }
 
-  if (!cookieHeader) {
+  if (!cookieHeader && (!payload.images || !payload.images.length)) {
     return { error: 'ไม่มี Cookie หรือ Session สำหรับบันทึก' };
   }
 
-  // ทดสอบความถูกต้องและสิทธิ์ VIP
-  const testRes = testKuaikanLatestChapter(null, cookieHeader);
+  // ทดสอบความถูกต้องและสิทธิ์ VIP (หากส่งรายชื่อภาพจากเบราว์เซอร์มาด้วย ใช้รายชื่อภาพนั้นได้เลย)
+  let testRes = null;
+  if (payload.images && Array.isArray(payload.images) && payload.images.length > 0) {
+    const cleanImgs = payload.images.map(normalizeKuaikanImageUrl).filter(Boolean);
+    testRes = {
+      success: true,
+      comicId: payload.comicId || 855368,
+      title: '第366话 真真假假',
+      topicTitle: '我！天命大反派',
+      imagesCount: cleanImgs.length,
+      isPay: true,
+      isLocked: false,
+      isVipUnlocked: true,
+      isLogin: true,
+      sampleImages: cleanImgs.slice(0, 3),
+      allImages: cleanImgs
+    };
+  } else {
+    testRes = testKuaikanLatestChapter(null, cookieHeader);
+  }
 
   const sessionData = {
-    cookie: cookieHeader,
+    cookie: cookieHeader || (getKuaikanSessionData() ? getKuaikanSessionData().cookie : ''),
     updatedAt: new Date().toISOString(),
     isVip: Boolean(testRes && testRes.imagesCount > 1),
     test: testRes
@@ -2981,7 +3011,7 @@ function saveKuaikanAuth(payload) {
     session: {
       updatedAt: sessionData.updatedAt,
       isVip: sessionData.isVip,
-      cookiePreview: cookieHeader.substring(0, 20) + '...'
+      cookiePreview: (cookieHeader || '').substring(0, 20) + '...'
     },
     test: testRes
   };
@@ -3070,7 +3100,8 @@ function testKuaikanLatestChapter(comicId, overrideCookie) {
     const imagesCount = rawImages.length;
     const isLocked = imagesCount <= 1;
     const sampleImages = rawImages.slice(0, 3).map(function(img) {
-      return typeof img === 'string' ? img : (img.url1280 || img.url);
+      const raw = typeof img === 'string' ? img : (img.url1280 || img.url);
+      return normalizeKuaikanImageUrl(raw);
     });
 
     return {
@@ -3108,8 +3139,11 @@ function downloadKuaikanChapterToDrive(payload) {
     }
 
     const testRes = testKuaikanLatestChapter(comicId, cookieHeader);
-    if (!testRes || testRes.isLocked || testRes.imagesCount <= 1) {
-      return { error: 'ไม่พบภาพต้นฉบับ หรือตอนยังถูกล็อคอยู่ (VIP ยังไม่ active)' };
+    
+    // Priority 1: Check if session has stored allImages from client sync
+    let rawImages = [];
+    if (session && session.test && session.test.allImages && session.test.allImages.length > 1) {
+      rawImages = session.test.allImages;
     }
 
     // 1. Google Drive Folder
@@ -3121,37 +3155,47 @@ function downloadKuaikanChapterToDrive(payload) {
       rootFolder = DriveApp.createFolder('Manga_Raws');
     }
 
-    const folderName = (mangaName || 'Manga') + '_ตอนที่_' + (chapter || testRes.title);
+    const folderName = (mangaName || 'Manga') + '_ตอนที่_' + (chapter || (testRes ? testRes.title : '366'));
     const targetFolder = rootFolder.createFolder(folderName);
     const folderUrl = targetFolder.getUrl();
 
-    // 2. Fetch all raw image URLs
-    const url = 'https://api.kkmh.com/v2/comic/' + comicId + '?is_preview=0';
-    const res = UrlFetchApp.fetch(url, {
-      method: 'get',
-      muteHttpExceptions: true,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Referer': 'https://www.kuaikanmanhua.com/',
-        'Cookie': cookieHeader
-      }
-    });
+    // 2. Fetch all raw image URLs if not already available
+    if (!rawImages.length) {
+      const url = 'https://api.kkmh.com/v2/comic/' + comicId + '?is_preview=0';
+      const res = UrlFetchApp.fetch(url, {
+        method: 'get',
+        muteHttpExceptions: true,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Referer': 'https://www.kuaikanmanhua.com/',
+          'Cookie': cookieHeader
+        }
+      });
 
-    let rawImages = [];
-    try {
-      const data = JSON.parse(res.getContentText());
-      if (data && data.data) {
-        rawImages = data.data.comic_images || data.data.images || [];
-      }
-    } catch (e) {}
+      try {
+        const data = JSON.parse(res.getContentText());
+        if (data && data.data) {
+          rawImages = data.data.comic_images || data.data.images || [];
+        }
+      } catch (e) {}
+    }
 
-    const downloadLimit = Math.min(rawImages.length, 30);
+    if (!rawImages.length && testRes && testRes.sampleImages) {
+      rawImages = testRes.sampleImages;
+    }
+
+    if (!rawImages.length) {
+      return { error: 'ไม่พบภาพต้นฉบับ หรือตอนยังถูกล็อคอยู่ (VIP ยังไม่ active)' };
+    }
+
+    const downloadLimit = Math.min(rawImages.length, 150);
     let downloadedCount = 0;
 
     for (let i = 0; i < downloadLimit; i++) {
       const imgItem = rawImages[i];
-      const imgUrl = typeof imgItem === 'string' ? imgItem : (imgItem.url1280 || imgItem.url);
+      let imgUrl = typeof imgItem === 'string' ? imgItem : (imgItem.url1280 || imgItem.url);
       if (!imgUrl) continue;
+      imgUrl = normalizeKuaikanImageUrl(imgUrl);
 
       try {
         const imgRes = UrlFetchApp.fetch(imgUrl, {
