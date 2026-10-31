@@ -775,6 +775,14 @@ function updateManga(id, updatedManga) {
           if (header === 'isurgent') sheet.getRange(rowNum, colNum).setValue(updatedManga.isurgent !== undefined ? updatedManga.isurgent : false);
         });
         invalidateCache('mangaList');
+        
+        // ซิงค์ชื่อและ URL ไปยัง RawTracker sheet ด้วย
+        try {
+          syncRawTrackerMangaInfo(id, updatedManga.manganame, updatedManga.originalurl);
+        } catch (trkErr) {
+          console.warn('Could not sync RawTracker info:', trkErr);
+        }
+
         return getMangaList();
       }
     }
@@ -800,6 +808,14 @@ function deleteManga(id) {
       if (data[i][0].toString() === id.toString()) {
         sheet.deleteRow(i + 1);
         invalidateCache('mangaList');
+
+        // ลบออกจาก RawTracker sheet ด้วยเพื่อไม่ให้ตกค้างในระบบติดตาม
+        try {
+          deleteRawTrackerByMangaId(id);
+        } catch (trkErr) {
+          console.warn('Could not delete from RawTracker:', trkErr);
+        }
+
         return getMangaList();
       }
     }
@@ -2282,14 +2298,17 @@ function getRawTrackerList() {
     
     // Auto import if empty
     if (data.length <= 1) {
-      return importTrackersFromMangaList();
+      const imp = importTrackersFromMangaList();
+      return Array.isArray(imp) ? imp : (imp.list || []);
     }
 
     const headers = data[0].map(h => h.toString().toLowerCase().trim());
     const mangaList = getMangaList();
     const mangaMap = {};
+    const validMangaNameMap = {};
     mangaList.forEach(m => {
-      mangaMap[String(m.mangaid)] = m;
+      mangaMap[String(m.mangaid).trim()] = m;
+      if (m.manganame) validMangaNameMap[m.manganame.trim().toLowerCase()] = m;
     });
 
     const results = [];
@@ -2301,7 +2320,16 @@ function getRawTrackerList() {
         if (val instanceof Date) val = val.toISOString();
         obj[headers[c]] = val;
       }
-      const manga = mangaMap[String(obj.mangaid)];
+
+      const mId = String(obj.mangaid || '').trim();
+      const mName = String(obj.manganame || '').trim().toLowerCase();
+      const manga = mId ? mangaMap[mId] : (mName ? validMangaNameMap[mName] : null);
+
+      // กรองมังงะที่ถูกลบออกจากระบบแล้ว ไม่นำมาแสดงผล
+      if (mId && !manga) {
+        continue;
+      }
+
       const currentChap = manga ? (parseFloat(manga.lastchapter) || 0) : 0;
       obj.currentChapter = currentChap > 0 ? String(currentChap) : (manga ? (manga.lastchapter || '0') : '0');
       if (!obj.manganame && manga) obj.manganame = manga.manganame;
@@ -2584,24 +2612,123 @@ function deleteRawTracker(trackerId) {
   }
 }
 
+/**
+ * ลบ Tracker ใน RawTracker เมื่อมังงะถูกลบออกจาก Mangas
+ */
+function deleteRawTrackerByMangaId(mangaId) {
+  if (!mangaId) return;
+  const sheet = getSheet(RAW_TRACKER_SHEET_NAME);
+  const data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return;
+  const headers = data[0].map(h => h.toString().toLowerCase().trim());
+  const mIdCol = headers.indexOf('mangaid');
+  if (mIdCol === -1) return;
+
+  for (let i = data.length - 1; i >= 1; i--) {
+    if (String(data[i][mIdCol]).trim() === String(mangaId).trim()) {
+      sheet.deleteRow(i + 1);
+    }
+  }
+}
+
+/**
+ * อัปเดตชื่อเรื่องและ URL ใน RawTracker ให้ตรงกับหน้าตั้งค่ามังงะเสมอ
+ */
+function syncRawTrackerMangaInfo(mangaId, newName, newUrl) {
+  if (!mangaId) return;
+  const sheet = getSheet(RAW_TRACKER_SHEET_NAME);
+  const data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return;
+  const headers = data[0].map(h => h.toString().toLowerCase().trim());
+  const mIdCol = headers.indexOf('mangaid');
+  const nameCol = headers.indexOf('manganame');
+  const urlCol = headers.indexOf('url');
+  if (mIdCol === -1) return;
+
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][mIdCol]).trim() === String(mangaId).trim()) {
+      if (nameCol !== -1 && newName) {
+        sheet.getRange(i + 1, nameCol + 1).setValue(newName);
+      }
+      if (urlCol !== -1 && newUrl) {
+        sheet.getRange(i + 1, urlCol + 1).setValue(newUrl);
+      }
+    }
+  }
+}
+
+/**
+ * ซิงค์ข้อมูลกับตารางมังงะ:
+ * 1. ลบเรื่องที่ถูกลบออกจาก Mangas ทิ้งไป
+ * 2. เพิ่มเรื่องที่มี Original URL แต่ยังไม่ได้ติดตาม
+ * 3. อัปเดตชื่อเรื่องและ URL ของเรื่องเดิมให้เป็นปัจจุบัน
+ */
 function importTrackersFromMangaList() {
   const mangaList = getMangaList();
+  const validMangaIdSet = new Set(mangaList.map(m => String(m.mangaid).trim()));
+  const validMangaNameMap = {};
+  mangaList.forEach(m => {
+    if (m.manganame) validMangaNameMap[m.manganame.trim().toLowerCase()] = m;
+  });
+
+  const mangaMap = {};
+  mangaList.forEach(m => { mangaMap[String(m.mangaid).trim()] = m; });
+
   const sheet = getSheet(RAW_TRACKER_SHEET_NAME);
   const data = sheet.getDataRange().getValues();
   const headers = data[0].map(h => h.toString().toLowerCase().trim());
-  const existingMangaIds = new Set();
   
+  const mIdCol = headers.indexOf('mangaid');
+  const nameCol = headers.indexOf('manganame');
+  const urlCol = headers.indexOf('url');
+  
+  const existingMangaIds = new Set();
+  let deletedCount = 0;
+
+  // 1. ตรวจสอบแถวเดิมใน RawTracker: ถ้าเรื่องถูกลบออกจาก Mangas แล้ว ให้ลบแถวออกจาก RawTracker
   if (data.length > 1) {
-    const mIdCol = headers.indexOf('mangaid');
-    for (let i = 1; i < data.length; i++) {
-      existingMangaIds.add(String(data[i][mIdCol]));
+    for (let i = data.length - 1; i >= 1; i--) {
+      const rowMangaId = mIdCol !== -1 ? String(data[i][mIdCol] || '').trim() : '';
+      const rowMangaName = nameCol !== -1 ? String(data[i][nameCol] || '').trim().toLowerCase() : '';
+      
+      let isOrphaned = false;
+      if (rowMangaId) {
+        if (!validMangaIdSet.has(rowMangaId)) {
+          isOrphaned = true;
+        }
+      } else if (rowMangaName) {
+        if (!validMangaNameMap[rowMangaName]) {
+          isOrphaned = true;
+        }
+      }
+
+      if (isOrphaned) {
+        sheet.deleteRow(i + 1);
+        deletedCount++;
+      } else {
+        if (rowMangaId) {
+          existingMangaIds.add(rowMangaId);
+          // อัปเดตข้อมูลมังงะ (ชื่อ และ originalurl) ให้ตรงกับหน้าตั้งค่ามังงะ
+          const m = mangaMap[rowMangaId];
+          if (m) {
+            if (nameCol !== -1 && m.manganame && data[i][nameCol] !== m.manganame) {
+              sheet.getRange(i + 1, nameCol + 1).setValue(m.manganame);
+            }
+            if (urlCol !== -1 && m.originalurl && m.originalurl.trim().startsWith('http') && data[i][urlCol] !== m.originalurl.trim()) {
+              sheet.getRange(i + 1, urlCol + 1).setValue(m.originalurl.trim());
+            }
+          }
+        }
+      }
     }
   }
 
+  // 2. เพิ่มมังงะใน Mangas ที่มี originalurl แต่ยังไม่มีใน RawTracker
   const rowsToAdd = [];
   const now = new Date();
   mangaList.forEach(m => {
-    if (m.originalurl && m.originalurl.trim().startsWith('http') && !existingMangaIds.has(String(m.mangaid))) {
+    const mIdStr = String(m.mangaid).trim();
+    if (m.originalurl && m.originalurl.trim().startsWith('http') && !existingMangaIds.has(mIdStr)) {
       const id = 'TRK' + new Date().getTime() + '_' + m.mangaid;
       const row = headers.map(header => {
         if (header === 'trackerid') return id;
@@ -2618,7 +2745,7 @@ function importTrackersFromMangaList() {
         return '';
       });
       rowsToAdd.push(row);
-      existingMangaIds.add(String(m.mangaid));
+      existingMangaIds.add(mIdStr);
     }
   });
 
@@ -2626,7 +2753,11 @@ function importTrackersFromMangaList() {
     sheet.getRange(sheet.getLastRow() + 1, 1, rowsToAdd.length, headers.length).setValues(rowsToAdd);
   }
 
-  return getRawTrackerList();
+  return {
+    deletedCount: deletedCount,
+    addedCount: rowsToAdd.length,
+    list: getRawTrackerList()
+  };
 }
 
 function checkAllRawTrackers(notifyTelegram = false) {
@@ -2666,6 +2797,9 @@ function checkAllRawTrackers(notifyTelegram = false) {
     const autoCheck = autoCheckCol > 0 ? String(data[i][autoCheckCol - 1]).toLowerCase() !== 'false' : true;
 
     if (!autoCheck || !url || !String(url).trim().startsWith('http')) continue;
+
+    // ถ้ามังงะเรื่องนี้ถูกลบไปแล้ว ให้ข้าม ไม่ต้อง scrape
+    if (mangaId && !mangaMap[String(mangaId)]) continue;
 
     const res = scrapeRawUrl(url, pattern);
     if (res.success) {
@@ -2794,6 +2928,9 @@ function getRawTrackerPendingChapters(targetTrackerId) {
       }
 
       const manga = mangaMap[String(item.mangaid)];
+      // ข้ามมังงะที่ถูกลบออกจากระบบแล้ว
+      if (item.mangaid && !manga) continue;
+
       const currentChap = parseFloat(item.currentChapter || (manga ? manga.lastchapter : 0)) || 0;
       const rawCount = parseFloat(item.lastrawcount || 0) || 0;
       const hasNew = (rawCount > currentChap) || (item.status && item.status.indexOf('มีตอนใหม่') !== -1);

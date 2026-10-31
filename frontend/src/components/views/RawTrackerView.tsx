@@ -125,8 +125,8 @@ export function RawTrackerView({
   } = useQuery<RawTrackerItem[]>({
     queryKey: ["rawTrackersList"],
     queryFn: async () => {
-      const res = await callGasApi<RawTrackerItem[]>("GET_RAW_TRACKER_LIST")
-      return Array.isArray(res) ? res : []
+      const res = await callGasApi<any>("GET_RAW_TRACKER_LIST")
+      return Array.isArray(res) ? res : (res?.list || [])
     },
     staleTime: 60 * 1000,
   })
@@ -364,19 +364,22 @@ export function RawTrackerView({
     }
   }
 
-  // Import from Manga List
+  // Import from Manga List & Two-way sync (delete orphaned trackers)
   const handleImportFromManga = async () => {
-    toast.loading("กำลังนำเข้ามังงะที่มี Original URL...", {
+    toast.loading("กำลังซิงค์รายการติดตามกับหน้าตั้งค่ามังงะ...", {
       id: "import-trackers",
     })
     try {
-      const res = await callGasApi("IMPORT_FROM_MANGA_LIST")
-      toast.success("นำเข้ารายชื่อมังงะสำหรับติดตามเรียบร้อยแล้ว", {
-        id: "import-trackers",
-      })
+      const res: any = await callGasApi("IMPORT_FROM_MANGA_LIST")
+      const del = res?.deletedCount || 0
+      const add = res?.addedCount || 0
+      toast.success(
+        `ซิงค์ข้อมูลมังงะเรียบร้อย (เพิ่มใหม่ ${add} เรื่อง, ลบเรื่องที่ยกเลิก ${del} เรื่อง)`,
+        { id: "import-trackers" }
+      )
       refetch()
     } catch (err: any) {
-      toast.error(err.message || "นำเข้าไม่สำเร็จ", { id: "import-trackers" })
+      toast.error(err.message || "ซิงค์ไม่สำเร็จ", { id: "import-trackers" })
     }
   }
 
@@ -478,20 +481,29 @@ export function RawTrackerView({
     [mangaMap, mangaList]
   )
 
+  // กรองเฉพาะ Tracker ที่มังงะยังคงมีอยู่ในตารางมังงะ (ตัดเรื่องที่ถูกลบออกจาก Mangas ออกอัตโนมัติ)
+  const activeTrackers = React.useMemo(() => {
+    if (!mangaList || mangaList.length === 0) return trackers
+    return trackers.filter((t) => {
+      if (!t.mangaid) return true
+      return mangaMap.has(String(t.mangaid))
+    })
+  }, [trackers, mangaList, mangaMap])
+
   // Statistics
   const urgentWithNewCount = React.useMemo(() => {
-    return trackers.filter((t) => getTrackerUrgency(t).isUrgentWithNew).length
-  }, [trackers, getTrackerUrgency])
+    return activeTrackers.filter((t) => getTrackerUrgency(t).isUrgentWithNew).length
+  }, [activeTrackers, getTrackerUrgency])
 
   const newUpdatesItems = React.useMemo(() => {
-    return trackers.filter((t) => getTrackerUrgency(t).hasNew)
-  }, [trackers, getTrackerUrgency])
+    return activeTrackers.filter((t) => getTrackerUrgency(t).hasNew)
+  }, [activeTrackers, getTrackerUrgency])
   const newUpdatesCount = newUpdatesItems.length
 
   // Filtered trackers
   const filteredTrackers = React.useMemo(() => {
     const q = search.toLowerCase().trim()
-    return trackers.filter((t) => {
+    return activeTrackers.filter((t) => {
       // Search
       if (q) {
         const name = String(t.manganame || "").toLowerCase()
@@ -516,7 +528,7 @@ export function RawTrackerView({
       }
       return true
     })
-  }, [trackers, search, statusFilter, getTrackerUrgency])
+  }, [activeTrackers, search, statusFilter, getTrackerUrgency])
 
   const getDomainInfo = (urlStr: string) => {
     try {
@@ -725,7 +737,7 @@ export function RawTrackerView({
           </div>
           <div className="mt-2 flex items-baseline gap-2">
             <span className="text-2xl font-bold text-white">
-              {trackers.length}
+              {activeTrackers.length}
             </span>
             <span className="text-xs text-slate-400">เรื่อง</span>
           </div>
@@ -876,7 +888,7 @@ export function RawTrackerView({
                     : "text-slate-400 hover:text-white"
                 }`}
               >
-                ทั้งหมด ({trackers.length})
+                ทั้งหมด ({activeTrackers.length})
               </button>
               <button
                 onClick={() => setStatusFilter("urgent_new")}
