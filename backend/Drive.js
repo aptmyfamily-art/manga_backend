@@ -15,15 +15,22 @@
 
 function AUTHORIZE_DRIVE() {
   const root = DriveApp.getRootFolder();
-  Logger.log('✓ สิทธิ์ Google Drive ได้รับการอนุมัติแล้ว! Root: ' + root.getName());
+  Logger.log('✓ สิทธิ์ Google Drive Root: ' + root.getName());
   
   const targetFolderId = '1hA_5XjT1gLnzrAOFpT-COVfIbuSfVG6_';
   try {
     const targetFolder = DriveApp.getFolderById(targetFolderId);
     Logger.log('✓ เข้าถึงโฟลเดอร์ แปลจนเมื่อย สำเร็จ: ' + targetFolder.getName() + ' (' + targetFolder.getUrl() + ')');
-    return 'ยินดีด้วย! บัญชีของคุณได้รับสิทธิ์เข้าถึง Google Drive และโฟลเดอร์ แปลจนเมื่อย เรียบร้อยแล้ว';
+
+    // ทดสอบสร้างโฟลเดอร์และลบโฟลเดอร์ทดสอบ เพื่อบังคับเปิดสิทธิ์ Create/Write Drive เต็มรูปแบบ
+    const testFolder = targetFolder.createFolder('__test_perm__');
+    Logger.log('✓ ทดสอบสร้างโฟลเดอร์สำเร็จ: ' + testFolder.getName());
+    testFolder.setTrashed(true);
+    Logger.log('✓ สิทธิ์ Read/Write/Create Google Drive ได้รับการอนุมัติ 100% แล้ว!');
+
+    return 'ยินดีด้วย! บัญชีของคุณได้รับสิทธิ์ สร้าง/บันทึกไฟล์ ในโฟลเดอร์ แปลจนเมื่อย ครบถ้วนแล้ว';
   } catch (err) {
-    Logger.log('คำเตือน: เข้าถึง Root ได้ แต่หาโฟลเดอร์ตาม ID ไม่พบ: ' + err);
-    return 'Authorized Root OK: ' + root.getName();
+    Logger.log('เกิดข้อผิดพลาดในการทดสอบสร้างโฟลเดอร์: ' + err);
+    throw err;
   }
 }
