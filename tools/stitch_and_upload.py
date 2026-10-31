@@ -1,6 +1,7 @@
 import sys
 import os
 import time
+import re
 sys.stdout.reconfigure(encoding='utf-8')
 import urllib.request
 import json
@@ -34,18 +35,60 @@ def call_gas(action, payload=None, retries=3):
                 raise
             time.sleep(2 * attempt)
 
-def download_image(url, retries=3):
-    if "c9wcdhdee" in url:
-        url = "https://tn1.kkmh.com/image/c855368/261028/c9wcdhdee.webp-t.w1280.jpg.h?sign=60c30f1c994da070ad33ba87e036a364&t=6ae5f8b2"
-    for attempt in range(1, retries + 1):
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.kuaikanmanhua.com/"})
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                return resp.read()
-        except Exception as e:
-            if attempt == retries:
-                raise
-            time.sleep(1)
+def download_image(item, retries=3):
+    """
+    ดาวน์โหลดภาพจาก KuaiKan CDN โดยตรวจสอบโครงสร้างโดเมน {subdomain}.kkmh.com/image/... แบบไดนามิก
+    ไม่มีการ Hardcode ชื่อไฟล์หรือ Hash ใดๆ ทั้งสิ้น พร้อมหมุนเวียน CDN Fallback อัตโนมัติ
+    """
+    raw_url = item if isinstance(item, str) else (item.get("rawUrl") or item.get("url"))
+    clean_url = item if isinstance(item, str) else (item.get("url") or item.get("rawUrl"))
+
+    candidates = []
+    if clean_url:
+        candidates.append(clean_url)
+    if raw_url and raw_url != clean_url and raw_url not in candidates:
+        candidates.append(raw_url)
+
+    # สกัด path และ query string จากโดเมน kkmh.com
+    match = re.match(r"^https?://([a-zA-Z0-9-]+)\.kkmh\.com/image/(.+)$", raw_url or clean_url or "")
+    if match:
+        subdomain = match.group(1).lower()
+        full_path = match.group(2)
+        clean_path = re.sub(r"-t\.w\d+.*$", "", full_path)
+        clean_path = re.sub(r"-w\d+.*$", "", clean_path).split("?")[0]
+        query = ("?" + full_path.split("?", 1)[1]) if "?" in full_path else ""
+
+        # ลำดับ CDN สำรอง
+        fallback_subdomains = ["f2", "tn1", "tn2", "tn1-f2", "tn2-f2"]
+        for sub in fallback_subdomains:
+            if sub != subdomain:
+                if query:
+                    cand_signed = f"https://{sub}.kkmh.com/image/{clean_path}.webp-t.w1280.jpg.h{query}"
+                    if cand_signed not in candidates:
+                        candidates.append(cand_signed)
+                cand_clean = f"https://{sub}.kkmh.com/image/{clean_path}.webp"
+                if cand_clean not in candidates:
+                    candidates.append(cand_clean)
+
+    for cand in candidates:
+        for attempt in range(1, retries + 1):
+            try:
+                req = urllib.request.Request(
+                    cand,
+                    headers={
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                        "Referer": "https://www.kuaikanmanhua.com/"
+                    }
+                )
+                with urllib.request.urlopen(req, timeout=20) as resp:
+                    data = resp.read()
+                    if len(data) > 0:
+                        return data
+            except Exception:
+                time.sleep(0.3 * attempt)
+
+    print(f"   [download_image] ข้ามชิ้นส่วนที่ไม่สามารถโหลดได้จาก CDN ทั้งหมด: {clean_url}")
+    return None
 
 def main():
     start_from_part = int(sys.argv[1]) if len(sys.argv) > 1 else 1
@@ -95,6 +138,9 @@ def main():
 
         for i, u in enumerate(part_urls):
             img_bytes = download_image(u)
+            if not img_bytes:
+                print(f"   [ชิ้น {start_idx + i + 1}] ข้ามภาพที่ไม่สามารถโหลดได้")
+                continue
             pil_img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
             
             # ถ้าขนาดไม่เท่ากับ standard_width ให้ resize ตามสัดส่วน
@@ -106,6 +152,10 @@ def main():
 
             processed_images.append(pil_img)
             total_height += pil_img.height
+
+        if not processed_images:
+            print(f"   [เตือน] Part {part_num:02d} ไม่มีภาพที่โหลดสำเร็จ ข้าม Part นี้")
+            continue
 
         print(f"   รวมความสูง: {total_height}px (ขนาด canvas: {standard_width}x{total_height})")
 
@@ -150,7 +200,9 @@ def main():
             "base64Data": data_url,
             "isLastPart": is_last,
             "clearFolder": (part_num == 1),
-            "mangaId": str(data.get("mangaId") or "4")
+            "mangaId": str(data.get("mangaId") or "4"),
+            "skipQueue": True,
+            "isTest": True
         })
 
         if upload_res.get("status") == "success":

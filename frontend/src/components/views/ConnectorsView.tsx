@@ -265,13 +265,21 @@ export function ConnectorsView({ mangaList }: ConnectorsViewProps) {
       return
     }
 
-    const rawUrls: string[] = testResult.allImages || testResult.sampleImages || []
-    if (!rawUrls.length) {
+    const rawItems: any[] = testResult.imageDetails || testResult.allImages || testResult.sampleImages || []
+    if (!rawItems.length) {
       toast.error("ไม่พบรายการภาพ กรุณากดทดสอบตอนอีกครั้ง")
       return
     }
 
-    const allUrls = rawUrls.map(normalizeKuaikanImageUrl).filter(Boolean)
+    const allUrls = rawItems.map((item: any) => {
+      const raw = typeof item === "string" ? item : (item.rawUrl || item.url)
+      const f2 = normalizeKuaikanImageUrl(raw)
+      return {
+        url: f2,
+        rawUrl: raw
+      }
+    }).filter((item) => Boolean(item.url || item.rawUrl))
+
     const totalPages = allUrls.length
     const totalParts =
       stitchMode === "slices20"
@@ -295,14 +303,14 @@ export function ConnectorsView({ mangaList }: ConnectorsViewProps) {
 
       try {
         const sampleImg = await loadImageElement(allUrls[sampleIdx])
-        if (sampleImg.naturalWidth && sampleImg.naturalWidth > 100) {
+        if (sampleImg && sampleImg.naturalWidth && sampleImg.naturalWidth > 100) {
           standardWidth = sampleImg.naturalWidth
         }
       } catch (err) {
         console.warn("Could not load sample middle image, trying first image:", err)
         try {
           const firstImg = await loadImageElement(allUrls[0])
-          if (firstImg.naturalWidth && firstImg.naturalWidth > 100) {
+          if (firstImg && firstImg.naturalWidth && firstImg.naturalWidth > 100) {
             standardWidth = firstImg.naturalWidth
           }
         } catch (e2) {}
@@ -336,15 +344,20 @@ export function ConnectorsView({ mangaList }: ConnectorsViewProps) {
           statusText: `กำลังโหลดและเย็บไฟล์ Part_${String(partNum).padStart(2, "0")}.webp (หน้าที่ ${partNum} จากทั้งหมด ${totalParts} หน้า, รวม ${sliceCount} ชิ้น)...`,
         })
 
-        // 2.1 โหลดภาพใน Part นี้พร้อมระบบ Auto-Retry วนซ้ำต่อเนื่อง
+        // 2.1 โหลดภาพใน Part นี้พร้อมระบบ Auto-Retry และ CDN Fallback
         const partUrls = allUrls.slice(startIdx, endIdx)
-        const loadedImages = await Promise.all(
+        const loadedResults = await Promise.all(
           partUrls.map((u) =>
             loadImageElement(u, (notice) => {
               setStitchProgress((prev) => (prev ? { ...prev, statusText: notice } : null))
             })
           )
         )
+        const loadedImages = loadedResults.filter((img): img is HTMLImageElement => img !== null)
+        if (!loadedImages.length) {
+          console.warn(`Part ${partNum} ไม่มีภาพที่โหลดสำเร็จ ข้าม Part นี้`)
+          continue
+        }
 
         // 2.2 ปรับสเกลภาพให้ความกว้างเท่ากับ standardWidth เสมอ
         let totalHeight = 0

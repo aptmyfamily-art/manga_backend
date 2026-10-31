@@ -2959,7 +2959,8 @@ function extractComicImagesFromHtml(html, comicId) {
   const seenKeys = {};
 
   // 2. Regex ค้นหาภาพตอนที่มี /image/c<targetId>/ หรือ /image/c\d+/
-  const targetRegex = new RegExp('https?:\\/\\/[^"\'\\s<>]*(?:kkmh\\.com)\\/image\\/c' + targetId + '\\/[^"\'\\s<>&]+', 'gi');
+  // หมายเหตุ: อย่าตัด & ออก เพื่อให้เก็บ query string (?sign=...&t=...) ไว้สำหรับเป็น fallback CDN
+  const targetRegex = new RegExp('https?:\\/\\/[^"\'\\s<>]*(?:kkmh\\.com)\\/image\\/c' + targetId + '\\/[^"\'\\s<>]+', 'gi');
   let match;
   while ((match = targetRegex.exec(decodedHtml)) !== null) {
     const rawUrl = match[0].replace(/&amp;/g, '&');
@@ -2971,13 +2972,13 @@ function extractComicImagesFromHtml(html, comicId) {
     const key = keyMatch ? keyMatch[1] : rawUrl;
     if (!seenKeys[key]) {
       seenKeys[key] = true;
-      urls.push(normalizeKuaikanImageUrl(rawUrl));
+      urls.push(rawUrl);
     }
   }
 
   // 3. Fallback ค้นหาภาพ /image/c\d+/ ทั่วไป
   if (!urls.length) {
-    const genericRegex = /https?:\/\/[^"'\s<>]*(?:kkmh\.com)\/image\/c\d+\/[^"'\s<>&]+/gi;
+    const genericRegex = /https?:\/\/[^"'\s<>]*(?:kkmh\.com)\/image\/c\d+\/[^"'\s<>]+/gi;
     let m2;
     while ((m2 = genericRegex.exec(decodedHtml)) !== null) {
       const rawUrl = m2[0].replace(/&amp;/g, '&');
@@ -2986,7 +2987,7 @@ function extractComicImagesFromHtml(html, comicId) {
       const key = keyMatch ? keyMatch[1] : rawUrl;
       if (!seenKeys[key]) {
         seenKeys[key] = true;
-        urls.push(normalizeKuaikanImageUrl(rawUrl));
+        urls.push(rawUrl);
       }
     }
   }
@@ -3196,13 +3197,21 @@ function testKuaikanLatestChapter(comicId, overrideCookie) {
     const imagesCount = rawImages.length;
     const isLocked = imagesCount <= 1;
     const sampleImages = rawImages.slice(0, 3).map(function(img) {
-      const raw = typeof img === 'string' ? img : (img.url1280 || img.url);
+      const raw = typeof img === 'string' ? img : (img.rawUrl || img.url1280 || img.url);
       return normalizeKuaikanImageUrl(raw);
     });
 
     const allNormalizedImages = rawImages.map(function(img) {
-      const raw = typeof img === 'string' ? img : (img.url1280 || img.url);
+      const raw = typeof img === 'string' ? img : (img.rawUrl || img.url1280 || img.url);
       return normalizeKuaikanImageUrl(raw);
+    });
+
+    const imageDetails = rawImages.map(function(img) {
+      const raw = typeof img === 'string' ? img : (img.rawUrl || img.url1280 || img.url);
+      return {
+        url: normalizeKuaikanImageUrl(raw),
+        rawUrl: raw
+      };
     });
 
     const thaiInfo = getThaiMangaInfo(topicTitle || targetComicId);
@@ -3223,7 +3232,8 @@ function testKuaikanLatestChapter(comicId, overrideCookie) {
       isVipUnlocked: !isLocked,
       isLogin: isLogin,
       sampleImages: sampleImages,
-      allImages: allNormalizedImages
+      allImages: allNormalizedImages,
+      imageDetails: imageDetails
     };
   } catch (e) {
     console.error('testKuaikanLatestChapter error:', e);
@@ -3491,30 +3501,41 @@ function downloadKuaikanChapterToDrive(payload) {
 
     for (let i = 0; i < downloadLimit; i++) {
       const imgItem = rawImages[i];
-      let imgUrl = typeof imgItem === 'string' ? imgItem : (imgItem.url1280 || imgItem.url);
+      let rawFallback = typeof imgItem === 'object' ? (imgItem.rawUrl || imgItem.url1280 || imgItem.url) : imgItem;
+      let imgUrl = typeof imgItem === 'string' ? imgItem : (imgItem.url1280 || imgItem.url || imgItem.rawUrl);
       if (!imgUrl) continue;
       imgUrl = normalizeKuaikanImageUrl(imgUrl);
 
+      const candidateUrls = [imgUrl];
+      if (rawFallback && rawFallback !== imgUrl && candidateUrls.indexOf(rawFallback) === -1) {
+        candidateUrls.push(rawFallback);
+      }
+
       let downloaded = false;
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        try {
-          const imgRes = UrlFetchApp.fetch(imgUrl, {
-            headers: { 'Referer': 'https://www.kuaikanmanhua.com/' },
-            muteHttpExceptions: true
-          });
-          if (imgRes.getResponseCode() === 200) {
-            const blob = imgRes.getBlob();
-            const ext = imgUrl.indexOf('.webp') !== -1 ? '.webp' : (imgUrl.indexOf('.png') !== -1 ? '.png' : '.jpg');
-            const filename = String(i + 1).padStart(3, '0') + ext;
-            blob.setName(filename);
-            targetFolder.createFile(blob);
-            downloadedCount++;
-            downloaded = true;
-            break;
+      for (let cIdx = 0; cIdx < candidateUrls.length && !downloaded; cIdx++) {
+        const currentUrl = candidateUrls[cIdx];
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          try {
+            const imgRes = UrlFetchApp.fetch(currentUrl, {
+              headers: { 'Referer': 'https://www.kuaikanmanhua.com/' },
+              muteHttpExceptions: true
+            });
+            if (imgRes.getResponseCode() === 200) {
+              const blob = imgRes.getBlob();
+              const ext = currentUrl.indexOf('.webp') !== -1 ? '.webp' : (currentUrl.indexOf('.png') !== -1 ? '.png' : '.jpg');
+              const filename = String(i + 1).padStart(3, '0') + ext;
+              blob.setName(filename);
+              targetFolder.createFile(blob);
+              downloadedCount++;
+              downloaded = true;
+              break;
+            }
+          } catch (err) {
+            if (attempt === 2 && cIdx === candidateUrls.length - 1) {
+              console.error('Image download error at ' + i + ':', err);
+            }
+            Utilities.sleep(400);
           }
-        } catch (err) {
-          if (attempt === 3) console.error('Image download error at ' + i + ' after 3 attempts:', err);
-          Utilities.sleep(500 * attempt);
         }
       }
     }

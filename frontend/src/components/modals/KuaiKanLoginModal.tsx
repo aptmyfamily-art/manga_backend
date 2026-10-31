@@ -46,10 +46,11 @@ const DRIVE_ROOT_FOLDER_ID = "1hA_5XjT1gLnzrAOFpT-COVfIbuSfVG6_"
 
 /**
  * ตรวจสอบและแปลง URL ภาพ KuaiKan ให้เป็น Full HD บน f2.kkmh.com
- * โดยตรวจโครงสร้างโดเมน {subdomain}.kkmh.com/image/... และตัดพารามิเตอร์ Thumbnail ออก เพื่อป้องกัน 403 Forbidden
+ * โดยตรวจโครงสร้างโดเมน {subdomain}.kkmh.com/image/... แบบไดนามิก รองรับทั้ง string และ object
  */
-export function normalizeKuaikanImageUrl(url: string): string {
-  if (!url) return ""
+export function normalizeKuaikanImageUrl(item: string | { url?: string; rawUrl?: string }): string {
+  if (!item) return ""
+  const url = typeof item === "object" ? (item.url || item.rawUrl || "") : item
   let u = String(url).trim().replace(/&amp;/g, "&")
   const match = u.match(/^https?:\/\/[a-zA-Z0-9-]+\.kkmh\.com\/image\/(.+)$/i)
   if (match) {
@@ -65,46 +66,57 @@ export function normalizeKuaikanImageUrl(url: string): string {
 }
 
 /**
- * Helper โหลดรูปเข้า HTMLImageElement พร้อมระบบ Auto-Retry วนซ้ำต่อเนื่องจนกว่าจะได้ภาพครบจริง (ไม่ข้าม ไม่หยุด)
- * ตรวจสอบและสลับ Domain ทางเลือกอัตโนมัติตามโครงสร้าง {subdomain}.kkmh.com/image/...
+ * Helper โหลดรูปเข้า HTMLImageElement พร้อมระบบ Auto-Retry และ CDN Fallback ไดนามิก
+ * - ตรวจสอบโครงสร้าง {subdomain}.kkmh.com/image/...
+ * - คงค่าพารามิเตอร์ Token ?sign=...&t=... ไว้สำหรับ fallback เมื่อ f2 คืนค่า 404
+ * - จำกัดรอบ Retry สูงสุด 5 ครั้ง ไม่ค้างลูป Retry 15+ และข้ามชิ้นส่วนที่เสียเพื่อไม่ให้งานค้าง
  */
 export async function loadImageElement(
-  url: string,
+  target: string | { url?: string; rawUrl?: string },
   onRetryNotice?: (text: string) => void
-): Promise<HTMLImageElement> {
-  const f2Url = normalizeKuaikanImageUrl(url)
-  const candidateUrls: string[] = [f2Url]
+): Promise<HTMLImageElement | null> {
+  const url = typeof target === "string" ? target : (target.url || target.rawUrl || "")
+  const rawUrl = typeof target === "string" ? target : (target.rawUrl || target.url || "")
 
-  // สำรองโดเมนเพิ่มเติม
-  const kkmhMatch = url.match(/^https?:\/\/([a-zA-Z0-9-]+)\.kkmh\.com\/image\/(.+)$/i)
+  const f2Url = normalizeKuaikanImageUrl(url || rawUrl)
+  const candidateUrls: string[] = []
+
+  // 1. ลอง f2.kkmh.com ก่อน (Full HD WebP ไร้ Token รวดเร็ว)
+  if (f2Url) candidateUrls.push(f2Url)
+
+  // 2. ถ้า rawUrl มี token sign & t ให้ใส่เป็น candidate อันดับสองทันที (ป้องกัน 404/403)
+  if (rawUrl && rawUrl !== f2Url && !candidateUrls.includes(rawUrl)) {
+    candidateUrls.push(rawUrl)
+  }
+
+  // 3. วิเคราะห์โครงสร้าง {subdomain}.kkmh.com/image/... เพื่อสลับ CDN โดเมนอื่น ๆ แบบไดนามิก
+  const kkmhMatch = (rawUrl || url).match(/^https?:\/\/([a-zA-Z0-9-]+)\.kkmh\.com\/image\/(.+)$/i)
   if (kkmhMatch) {
-    const imagePath = kkmhMatch[2]
-    const cleanPath = imagePath
+    const originalSub = kkmhMatch[1].toLowerCase()
+    const fullPath = kkmhMatch[2]
+    const cleanPath = fullPath
       .replace(/-t\.w\d+.*$/i, "")
       .replace(/-w\d+.*$/i, "")
       .split("?")[0]
+    const query = fullPath.includes("?") ? fullPath.substring(fullPath.indexOf("?")) : ""
 
-    // สำรอง: original URL
-    if (url !== f2Url && !candidateUrls.includes(url)) candidateUrls.push(url)
-
-    // สำรอง: tn1.kkmh.com
-    const tn1Url = `https://tn1.kkmh.com/image/${cleanPath}`
-    if (!candidateUrls.includes(tn1Url)) candidateUrls.push(tn1Url)
-
-    // สำรอง: tn2.kkmh.com
-    const tn2Url = `https://tn2.kkmh.com/image/${cleanPath}`
-    if (!candidateUrls.includes(tn2Url)) candidateUrls.push(tn2Url)
+    const cdns = ["tn1", "tn2", "tn1-f2", "tn2-f2", "f2"]
+    for (const cdn of cdns) {
+      if (cdn !== originalSub) {
+        if (query) {
+          const candSigned = `https://${cdn}.kkmh.com/image/${cleanPath}.webp-t.w1280.jpg.h${query}`
+          if (!candidateUrls.includes(candSigned)) candidateUrls.push(candSigned)
+        }
+        const candClean = `https://${cdn}.kkmh.com/image/${cleanPath}.webp`
+        if (!candidateUrls.includes(candClean)) candidateUrls.push(candClean)
+      }
+    }
   }
 
+  const maxAttempts = 5
   let attempt = 1
-  while (true) {
-    // หมุนเวียน URL จาก candidateUrls ตามรอบ attempt
+  while (attempt <= maxAttempts) {
     const currentCandidate = candidateUrls[(attempt - 1) % candidateUrls.length]
-    const finalUrl =
-      attempt > candidateUrls.length
-        ? `${currentCandidate}${currentCandidate.includes("?") ? "&" : "?"}_r=${attempt}&_t=${Date.now()}`
-        : currentCandidate
-
     try {
       const img = await new Promise<HTMLImageElement>((resolve, reject) => {
         const image = new Image()
@@ -114,8 +126,8 @@ export async function loadImageElement(
         const timer = setTimeout(() => {
           image.onload = null
           image.onerror = null
-          reject(new Error(`Timeout 15s (ครั้งที่ ${attempt})`))
-        }, 15000)
+          reject(new Error(`Timeout 12s (ครั้งที่ ${attempt})`))
+        }, 12000)
 
         image.onload = () => {
           clearTimeout(timer)
@@ -131,20 +143,25 @@ export async function loadImageElement(
           reject(new Error(`โหลดภาพไม่สำเร็จ (ครั้งที่ ${attempt})`))
         }
 
-        image.src = finalUrl
+        image.src = currentCandidate
       })
 
       return img
     } catch (err: any) {
-      console.warn(`[loadImageElement] Retry #${attempt} for ${url}:`, err.message)
+      console.warn(`[loadImageElement] Retry #${attempt}/${maxAttempts} for ${url}:`, err.message)
       if (onRetryNotice) {
-        onRetryNotice(`⚠️ มีภาพกำลัง Retry ครั้งที่ ${attempt}... (กำลังสลับ CDN โดเมน)`)
+        onRetryNotice(`⚠️ มีภาพกำลัง Retry ครั้งที่ ${attempt}/${maxAttempts}... (กำลังสลับ CDN โดเมน)`)
       }
       attempt++
-      const delayMs = Math.min(attempt * 600, 3000)
-      await new Promise((r) => setTimeout(r, delayMs))
+      if (attempt <= maxAttempts) {
+        const delayMs = Math.min(attempt * 500, 2500)
+        await new Promise((r) => setTimeout(r, delayMs))
+      }
     }
   }
+
+  console.warn(`[loadImageElement] ข้ามภาพที่ไม่สามารถโหลดได้หลังจากพยายาม ${maxAttempts} ครั้ง: ${url}`)
+  return null
 }
 
 export function KuaiKanLoginModal({
@@ -589,13 +606,21 @@ export function KuaiKanLoginModal({
       return
     }
 
-    const rawUrls: string[] = testResult.allImages || testResult.sampleImages || []
-    if (!rawUrls.length) {
+    const rawItems: any[] = testResult.imageDetails || testResult.allImages || testResult.sampleImages || []
+    if (!rawItems.length) {
       toast.error("ไม่พบรายการภาพ กรุณากดทดสอบตอนหรือซิงค์ Session อีกครั้ง")
       return
     }
 
-    const allUrls = rawUrls.map(normalizeKuaikanImageUrl).filter(Boolean)
+    const allUrls = rawItems.map((item: any) => {
+      const raw = typeof item === "string" ? item : (item.rawUrl || item.url)
+      const f2 = normalizeKuaikanImageUrl(raw)
+      return {
+        url: f2,
+        rawUrl: raw
+      }
+    }).filter((item) => Boolean(item.url || item.rawUrl))
+
     const totalPages = allUrls.length
     const totalParts =
       stitchMode === "slices20"
@@ -619,14 +644,14 @@ export function KuaiKanLoginModal({
 
       try {
         const sampleImg = await loadImageElement(allUrls[sampleIdx])
-        if (sampleImg.naturalWidth && sampleImg.naturalWidth > 100) {
+        if (sampleImg && sampleImg.naturalWidth && sampleImg.naturalWidth > 100) {
           standardWidth = sampleImg.naturalWidth
         }
       } catch (err) {
         console.warn("Could not load sample middle image, trying first image:", err)
         try {
           const firstImg = await loadImageElement(allUrls[0])
-          if (firstImg.naturalWidth && firstImg.naturalWidth > 100) {
+          if (firstImg && firstImg.naturalWidth && firstImg.naturalWidth > 100) {
             standardWidth = firstImg.naturalWidth
           }
         } catch (e2) {}
@@ -660,15 +685,20 @@ export function KuaiKanLoginModal({
           statusText: `กำลังโหลดและเย็บไฟล์ Part_${String(partNum).padStart(2, "0")}.webp (หน้าที่ ${partNum} จากทั้งหมด ${totalParts} หน้า, รวม ${sliceCount} ชิ้น)...`,
         })
 
-        // 2.1 โหลดภาพใน Part นี้ (พร้อมระบบ Auto-Retry ต่อเนื่องจนได้ภาพครบจริง)
+        // 2.1 โหลดภาพใน Part นี้ (พร้อมระบบ Auto-Retry และ CDN Fallback)
         const partUrls = allUrls.slice(startIdx, endIdx)
-        const loadedImages = await Promise.all(
+        const loadedResults = await Promise.all(
           partUrls.map((u) =>
             loadImageElement(u, (notice) => {
               setStitchProgress((prev) => (prev ? { ...prev, statusText: notice } : null))
             })
           )
         )
+        const loadedImages = loadedResults.filter((img): img is HTMLImageElement => img !== null)
+        if (!loadedImages.length) {
+          console.warn(`Part ${partNum} ไม่มีภาพที่โหลดสำเร็จ ข้าม Part นี้`)
+          continue
+        }
 
         // 2.2 ปรับสเกลภาพให้ความกว้างเท่ากับ standardWidth เสมอ (ขยายหน้าปกหรือหน้าที่ความกว้างต่างกัน)
         let totalHeight = 0
