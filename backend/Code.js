@@ -324,41 +324,132 @@ function updateMangaEpisodeOnWebsite(mangaSlug, episodeNumber) {
   }
 }
 
-// Cache Helper Functions
-function getCachedData(key, fetchFunction, ttlSeconds = 300) {
-  const cache = CacheService.getScriptCache();
-  let data = cache.get(key);
-  
-  if (data) {
-    try {
-      return JSON.parse(data);
-    } catch (e) {
-      console.error('Cache parse error:', e);
-      cache.remove(key);
-    }
+// Spreadsheet Singleton & Cache Helper Functions
+let _globalSpreadsheetInstance = null;
+function getSpreadsheet() {
+  if (!_globalSpreadsheetInstance) {
+    _globalSpreadsheetInstance = SpreadsheetApp.openById(SPREADSHEET_ID);
   }
-  
+  return _globalSpreadsheetInstance;
+}
+
+function getCachedData(key, fetchFunction, ttlSeconds = 600) {
+  const cache = CacheService.getScriptCache();
+  try {
+    const metaStr = cache.get(key + '_meta');
+    if (metaStr) {
+      const numChunks = parseInt(metaStr, 10);
+      const chunkKeys = [];
+      for (let i = 0; i < numChunks; i++) chunkKeys.push(key + '_' + i);
+      const chunksMap = cache.getAll(chunkKeys);
+      let combined = '';
+      let isComplete = true;
+      for (let i = 0; i < numChunks; i++) {
+        const part = chunksMap[key + '_' + i];
+        if (part === undefined || part === null) {
+          isComplete = false;
+          break;
+        }
+        combined += part;
+      }
+      if (isComplete && combined) {
+        return JSON.parse(combined);
+      }
+    } else {
+      const single = cache.get(key);
+      if (single) {
+        return JSON.parse(single);
+      }
+    }
+  } catch (e) {
+    console.warn('Cache read error (' + key + '):', e);
+  }
+
+  // Cache Miss: Run fetchFunction
   const result = fetchFunction();
   try {
-    cache.put(key, JSON.stringify(result), ttlSeconds);
+    const serialized = JSON.stringify(result);
+    const CHUNK_SIZE = 90000;
+    if (serialized.length <= CHUNK_SIZE) {
+      cache.put(key, serialized, ttlSeconds);
+    } else {
+      const numChunks = Math.ceil(serialized.length / CHUNK_SIZE);
+      const chunkMap = {};
+      chunkMap[key + '_meta'] = String(numChunks);
+      for (let i = 0; i < numChunks; i++) {
+        chunkMap[key + '_' + i] = serialized.substring(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+      }
+      cache.putAll(chunkMap, ttlSeconds);
+    }
   } catch (e) {
-    console.error('Cache put error:', e);
+    console.error('Cache write error (' + key + '):', e);
   }
   return result;
 }
 
 function invalidateCache(keys) {
   const cache = CacheService.getScriptCache();
-  if (Array.isArray(keys)) {
-    cache.removeAll(keys);
-  } else {
-    cache.remove(keys);
+  const keysArray = Array.isArray(keys) ? keys : [keys];
+  const toRemove = [];
+  keysArray.forEach(k => {
+    toRemove.push(k);
+    toRemove.push(k + '_meta');
+    for (let i = 0; i < 20; i++) {
+      toRemove.push(k + '_' + i);
+    }
+  });
+  cache.removeAll(toRemove);
+}
+
+function ensureSheetHeaders(sheet, name) {
+  if (name === SHEET_NAME) {
+    const lastCol = sheet.getLastColumn();
+    if (lastCol > 0) {
+      const ensureCol = (colName, defaultVal) => {
+        const currentHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(h => h.toString().toLowerCase().trim());
+        if (currentHeaders.indexOf(colName.toLowerCase()) === -1) {
+          const newCol = sheet.getLastColumn() + 1;
+          sheet.getRange(1, newCol).setValue(colName);
+          if (defaultVal !== undefined && sheet.getLastRow() > 1) {
+            sheet.getRange(2, newCol, sheet.getLastRow() - 1, 1).setValue(defaultVal);
+          }
+        }
+      };
+      ensureCol('NeedsExtract', true);
+      ensureCol('ReleaseDay', 'None');
+      ensureCol('CostPerChapter', 0);
+      ensureCol('LockedTranslator', '');
+      ensureCol('NotifyOnAdd', false);
+      ensureCol('Slug', '');
+      ensureCol('IsUrgent', false);
+    }
+  }
+
+  if (name === QUEUE_SHEET_NAME) {
+    const lastCol = sheet.getLastColumn();
+    if (lastCol > 0) {
+      const currentHeaders = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(h => h.toString().toLowerCase().trim());
+      const required = ['poststatus', 'postername', 'posttime', 'isediting', 'editingby', 'editingtime'];
+      const displayMap = {
+        'poststatus': 'PostStatus',
+        'postername': 'PosterName',
+        'posttime': 'PostTime',
+        'isediting': 'IsEditing',
+        'editingby': 'EditingBy',
+        'editingtime': 'EditingTime'
+      };
+      required.forEach(req => {
+        if (currentHeaders.indexOf(req) === -1) {
+          const newCol = sheet.getLastColumn() + 1;
+          sheet.getRange(1, newCol).setValue(displayMap[req] || (req.charAt(0).toUpperCase() + req.slice(1)));
+        }
+      });
+    }
   }
 }
 
 function getSheet(name = SHEET_NAME) {
-  let ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-  
+  const ss = getSpreadsheet();
   let sheet = ss.getSheetByName(name);
   if (!sheet) {
     sheet = ss.insertSheet(name);
@@ -417,54 +508,8 @@ function getSheet(name = SHEET_NAME) {
       ];
       sheet.getRange(2, 1, defaults.length, 1).setValues(defaults);
     }
+    ensureSheetHeaders(sheet, name);
   }
-  
-  // Ensure headers exist (Migration support)
-  if (name === SHEET_NAME) {
-    const lastCol = sheet.getLastColumn();
-    if (lastCol > 0) {
-      const ensureCol = (colName, defaultVal) => {
-        const currentHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(h => h.toString().toLowerCase().trim());
-        if (currentHeaders.indexOf(colName.toLowerCase()) === -1) {
-          const newCol = sheet.getLastColumn() + 1;
-          sheet.getRange(1, newCol).setValue(colName);
-          if (defaultVal !== undefined && sheet.getLastRow() > 1) {
-            sheet.getRange(2, newCol, sheet.getLastRow() - 1, 1).setValue(defaultVal);
-          }
-        }
-      };
-      ensureCol('NeedsExtract', true);
-      ensureCol('ReleaseDay', 'None');
-      ensureCol('CostPerChapter', 0);
-      ensureCol('LockedTranslator', '');
-      ensureCol('NotifyOnAdd', false);
-      ensureCol('Slug', '');
-      ensureCol('IsUrgent', false);
-    }
-  }
-
-  if (name === QUEUE_SHEET_NAME) {
-    const lastCol = sheet.getLastColumn();
-    if (lastCol > 0) {
-      const currentHeaders = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(h => h.toString().toLowerCase().trim());
-      const required = ['poststatus', 'postername', 'posttime', 'isediting', 'editingby', 'editingtime'];
-      const displayMap = {
-        'poststatus': 'PostStatus',
-        'postername': 'PosterName',
-        'posttime': 'PostTime',
-        'isediting': 'IsEditing',
-        'editingby': 'EditingBy',
-        'editingtime': 'EditingTime'
-      };
-      required.forEach(req => {
-        if (currentHeaders.indexOf(req) === -1) {
-          const newCol = sheet.getLastColumn() + 1;
-          sheet.getRange(1, newCol).setValue(displayMap[req] || (req.charAt(0).toUpperCase() + req.slice(1)));
-        }
-      });
-    }
-  }
-  
   return sheet;
 }
 
@@ -1536,7 +1581,7 @@ function createMovePendingTrigger() {
 
 // --- BUDGET PAYEES ---
 function getBudgetPayees() {
-  return readSheetData(BUDGET_PAYEE_SHEET_NAME);
+  return getCachedData('budget_payees', () => readSheetData(BUDGET_PAYEE_SHEET_NAME), 600);
 }
 
 function addBudgetPayee(payee) {
@@ -1546,6 +1591,7 @@ function addBudgetPayee(payee) {
     const sheet = getSheet(BUDGET_PAYEE_SHEET_NAME);
     const id = 'P' + new Date().getTime();
     sheet.appendRow([id, payee.name, payee.taxid, payee.bankaccount || '', payee.bankname || '', payee.note || '']);
+    invalidateCache('budget_payees');
     return { success: true, payees: getBudgetPayees() };
   } catch (err) {
     return { error: 'Add Payee Failed: ' + err.toString() };
@@ -1573,6 +1619,7 @@ function updateBudgetPayee(id, updated) {
           if (header === 'bankname') sheet.getRange(rowNum, colNum).setValue(updated.bankname);
           if (header === 'note') sheet.getRange(rowNum, colNum).setValue(updated.note);
         });
+        invalidateCache('budget_payees');
         return { success: true, payees: getBudgetPayees() };
       }
     }
@@ -1593,6 +1640,7 @@ function deleteBudgetPayee(id) {
     for (let i = 1; i < data.length; i++) {
       if (data[i][0].toString() === id.toString()) {
         sheet.deleteRow(i + 1);
+        invalidateCache('budget_payees');
         return { success: true, payees: getBudgetPayees() };
       }
     }
@@ -1606,7 +1654,7 @@ function deleteBudgetPayee(id) {
 
 // --- BUDGET TRANSACTIONS ---
 function getBudgetTransactions() {
-  return readSheetData(BUDGET_TRANSACTION_SHEET_NAME);
+  return getCachedData('budget_transactions', () => readSheetData(BUDGET_TRANSACTION_SHEET_NAME), 600);
 }
 
 function addBudgetTransaction(trans) {
@@ -1626,6 +1674,7 @@ function addBudgetTransaction(trans) {
       trans.reference || '', 
       trans.note || ''
     ]);
+    invalidateCache('budget_transactions');
     return { success: true, transactions: getBudgetTransactions() };
   } catch (err) {
     return { error: 'Add Transaction Failed: ' + err.toString() };
@@ -1643,6 +1692,7 @@ function deleteBudgetTransaction(id) {
     for (let i = 1; i < data.length; i++) {
       if (data[i][0].toString() === id.toString()) {
         sheet.deleteRow(i + 1);
+        invalidateCache('budget_transactions');
         return { success: true, transactions: getBudgetTransactions() };
       }
     }
@@ -1701,7 +1751,7 @@ function getAllData() {
 
 function getDashboardData(forceRefresh = false, month, year) {
   if (forceRefresh) {
-    invalidateCache(['mangaList', 'workQueue', 'teamList']);
+    invalidateCache(['mangaList', 'workQueue', 'teamList', 'manga_sales', 'budget_payees', 'budget_transactions', 'website_list']);
   }
   const now = new Date();
   const targetMonth = month !== undefined && month !== null && month !== '' ? month : String(now.getMonth() + 1);
@@ -1773,27 +1823,29 @@ function checkQueueLock(queueId) {
  * MANGA SALES (Financials) CRUD
  */
 function getMangaSales() {
-  try {
-    const sheet = getSheet(MANGA_SALES_SHEET_NAME);
-    const data = sheet.getDataRange().getValues();
-    if (data.length <= 1) return [];
+  return getCachedData('manga_sales', () => {
+    try {
+      const sheet = getSheet(MANGA_SALES_SHEET_NAME);
+      const data = sheet.getDataRange().getValues();
+      if (data.length <= 1) return [];
 
-    const rawHeaders = data.shift();
-    const headers = rawHeaders.map(h => h.toString().toLowerCase().trim());
-    
-    return data.map((row, idx) => {
-      let obj = { _rowIndex: idx };
-      headers.forEach((header, i) => {
-        let val = row[i];
-        if (val instanceof Date) val = val.toISOString();
-        obj[header] = val;
+      const rawHeaders = data.shift();
+      const headers = rawHeaders.map(h => h.toString().toLowerCase().trim());
+      
+      return data.map((row, idx) => {
+        let obj = { _rowIndex: idx };
+        headers.forEach((header, i) => {
+          let val = row[i];
+          if (val instanceof Date) val = val.toISOString();
+          obj[header] = val;
+        });
+        return obj;
       });
-      return obj;
-    });
-  } catch (err) {
-    console.error('getMangaSales Error:', err);
-    return [];
-  }
+    } catch (err) {
+      console.error('getMangaSales Error:', err);
+      return [];
+    }
+  }, 600);
 }
 
 function addMangaSale(sale) {
@@ -1825,6 +1877,7 @@ function addMangaSale(sale) {
     });
 
     sheet.appendRow(newRow);
+    invalidateCache('manga_sales');
     return { success: true, list: getMangaSales() };
   } catch (err) {
     console.error('addMangaSale Error:', err);
@@ -1849,6 +1902,7 @@ function bulkAddMangaSales(salesArray) {
       if (sale.website && !existingWebsites.includes(sale.website)) {
         websiteSheet.appendRow([sale.website]);
         existingWebsites.push(sale.website);
+        invalidateCache('website_list');
       }
       
       return headers.map(header => {
@@ -1879,7 +1933,7 @@ function bulkAddMangaSales(salesArray) {
       range.setValues(newRows);
     }
     
-    invalidateCache(['financial_sales']);
+    invalidateCache(['manga_sales', 'financial_sales']);
     return { success: true, count: newRows.length, list: getMangaSales(), websites: getWebsiteList() };
   } catch (err) {
     console.error('bulkAddMangaSales Error:', err);
@@ -1895,6 +1949,7 @@ function deleteMangaSale(index) {
     lock.waitLock(30000);
     const sheet = getSheet(MANGA_SALES_SHEET_NAME);
     sheet.deleteRow(Number(index) + 2);
+    invalidateCache('manga_sales');
     return { success: true, list: getMangaSales() };
   } catch (err) {
     return { error: 'Delete Sale Failed: ' + err.toString() };
@@ -1925,17 +1980,19 @@ function countFinishedChapters(mangaId, year, month) {
 }
 
 function getWebsiteList() {
-  try {
-    const sheet = getSheet(WEBSITE_SHEET_NAME);
-    const data = sheet.getDataRange().getValues();
-    if (data.length <= 1) return [];
+  return getCachedData('website_list', () => {
+    try {
+      const sheet = getSheet(WEBSITE_SHEET_NAME);
+      const data = sheet.getDataRange().getValues();
+      if (data.length <= 1) return [];
 
-    data.shift();
-    return data.map(row => row[0]).filter(Boolean);
-  } catch (err) {
-    console.error('getWebsiteList Error:', err);
-    return [];
-  }
+      data.shift();
+      return data.map(row => row[0]).filter(Boolean);
+    } catch (err) {
+      console.error('getWebsiteList Error:', err);
+      return [];
+    }
+  }, 600);
 }
 
 function getFinancialInitData() {
