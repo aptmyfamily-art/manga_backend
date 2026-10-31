@@ -3149,23 +3149,6 @@ function testKuaikanLatestChapter(comicId, overrideCookie) {
 const KUAIKAN_DRIVE_ROOT_FOLDER_ID = '1hA_5XjT1gLnzrAOFpT-COVfIbuSfVG6_';
 
 /**
- * ฟังก์ชันสำหรับให้สิทธิ์ (Authorize) Google Drive ใน Apps Script Editor ครั้งแรก
- * ให้เปิด Apps Script Editor -> เลือกฟังก์ชัน AUTHORIZE_DRIVE -> กด "เรียกใช้" (Run) -> กดยอมรับสิทธิ์
- */
-function AUTHORIZE_DRIVE() {
-  const root = DriveApp.getRootFolder();
-  Logger.log('Google Drive Root Folder: ' + root.getName());
-  try {
-    const targetFolder = DriveApp.getFolderById(KUAIKAN_DRIVE_ROOT_FOLDER_ID);
-    Logger.log('เข้าถึงโฟลเดอร์ แปลจนเมื่อย สำเร็จ: ' + targetFolder.getName() + ' (' + targetFolder.getUrl() + ')');
-    return 'Authorized successfully! Target folder: ' + targetFolder.getName();
-  } catch (e) {
-    Logger.log('Authorized Root OK, but could not get target folder directly: ' + e);
-    return 'Authorized Root OK: ' + root.getName();
-  }
-}
-
-/**
  * ดึงหรือสร้างโครงสร้างโฟลเดอร์ใน Google Drive:
  * แปลจนเมื่อย (1hA_5XjT1gLnzrAOFpT-COVfIbuSfVG6_) / {ชื่อเรื่อง} / {เลขตอน}
  */
