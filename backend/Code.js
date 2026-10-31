@@ -285,6 +285,12 @@ function doPost(e) {
       case 'SETUP_HOURLY_TRACKER_TRIGGER':
         result = setupHourlyTrackerTrigger();
         break;
+      case 'GET_RAW_TRACKER_PENDING_CHAPTERS':
+        result = getRawTrackerPendingChapters(payload ? payload.trackerId : null);
+        break;
+      case 'COMPLETE_RAW_TRACKER_CHAPTER':
+        result = completeRawTrackerChapter(payload);
+        break;
 
       // --- KUAIKAN VIP & WECHAT AUTH ---
       case 'GET_KUAIKAN_QR':
@@ -2765,6 +2771,170 @@ function setupHourlyTrackerTrigger() {
 
 function hourlyRawTrackerJob() {
   checkAllRawTrackers(true);
+}
+
+/**
+ * ดึงรายการตอนใหม่ทั้งหมดที่รออัปโหลดและลงคิวงานจาก RawTracker
+ * ตรวจสอบเฉพาะรายการที่มีสถานะ "มีตอนใหม่" หรือ lastrawcount > currentChapter
+ * รองรับการดึง Chapter list จาก KuaiKan topic URL โดยอัตโนมัติ
+ */
+function getRawTrackerPendingChapters(targetTrackerId) {
+  try {
+    const trackerList = getRawTrackerList();
+    const mangaList = getMangaList();
+    const mangaMap = {};
+    mangaList.forEach(m => { mangaMap[String(m.mangaid)] = m; });
+
+    const pendingTasks = [];
+
+    for (let i = 0; i < trackerList.length; i++) {
+      const item = trackerList[i];
+      if (targetTrackerId && String(item.trackerid) !== String(targetTrackerId)) {
+        continue;
+      }
+
+      const manga = mangaMap[String(item.mangaid)];
+      const currentChap = parseFloat(item.currentChapter || (manga ? manga.lastchapter : 0)) || 0;
+      const rawCount = parseFloat(item.lastrawcount || 0) || 0;
+      const hasNew = (rawCount > currentChap) || (item.status && item.status.indexOf('มีตอนใหม่') !== -1);
+
+      if (!hasNew) continue;
+
+      const url = String(item.url || '').trim();
+      const isKuaikan = url.indexOf('kuaikanmanhua.com') !== -1;
+
+      if (isKuaikan) {
+        // สกัด topic ID เช่น 12602 หรือ 19109 จาก /web/topic/19109/ หรือ /mobile/27689/
+        const topicMatch = url.match(/\/(?:topic|mobile)\/(\d+)/i);
+        if (topicMatch) {
+          const topicId = topicMatch[1];
+          const topicUrl = 'https://www.kuaikanmanhua.com/web/topic/' + topicId + '/';
+          try {
+            const resp = UrlFetchApp.fetch(topicUrl, {
+              method: 'get',
+              muteHttpExceptions: true,
+              headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+              }
+            });
+            const html = resp.getContentText();
+            // Regex สกัด (comicId, title, chapterNum)
+            const chapterMatches = [];
+            const regex = /(\d{5,9}),"((?:第)?\s*(\d+(?:\.\d+)?)\s*(?:话|集)\s*[^"]*)"/g;
+            let m;
+            while ((m = regex.exec(html)) !== null) {
+              const cNum = parseFloat(m[3]);
+              if (!isNaN(cNum)) {
+                chapterMatches.push({
+                  comicId: m[1],
+                  chapterTitle: m[2],
+                  chapterNum: cNum
+                });
+              }
+            }
+
+            // จัดเรียงเลขตอนจากน้อยไปหามาก
+            chapterMatches.sort(function(a, b) { return a.chapterNum - b.chapterNum; });
+
+            // คัดเฉพาะตอนใหม่ที่เลขตอน > currentChap
+            chapterMatches.forEach(function(chap) {
+              if (chap.chapterNum > currentChap) {
+                pendingTasks.push({
+                  trackerId: item.trackerid,
+                  mangaId: item.mangaid,
+                  mangaName: item.manganame || (manga ? manga.manganame : ''),
+                  comicId: chap.comicId,
+                  chapterNum: chap.chapterNum,
+                  chapterTitle: chap.chapterTitle,
+                  sourceUrl: item.url,
+                  connector: 'kuaikan'
+                });
+              }
+            });
+          } catch (fetchErr) {
+            console.error('Error fetching KuaiKan topic ' + topicId + ':', fetchErr);
+          }
+        }
+      }
+    }
+
+    return {
+      success: true,
+      pendingCount: pendingTasks.length,
+      tasks: pendingTasks
+    };
+  } catch (err) {
+    console.error('getRawTrackerPendingChapters error:', err);
+    return { success: false, error: err.toString(), tasks: [] };
+  }
+}
+
+/**
+ * บันทึกความสมบูรณ์หลังจากเย็บและอัปโหลดตอนเสร็จสิ้น:
+ * 1. อัปเดตเลขตอนล่าสุดใน Mangas sheet (lastchapter)
+ * 2. อัปเดต RawTracker sheet (currentChapter, lastrawcount, status -> 'เป็นปัจจุบัน' หรือ 'มีตอนใหม่')
+ * 3. ส่งสัญญาณกลับเพื่อให้ลูปทำงานตอนต่อไป
+ */
+function completeRawTrackerChapter(payload) {
+  try {
+    if (!payload || !payload.mangaId || !payload.chapterNum) {
+      return { error: 'mangaId and chapterNum required' };
+    }
+
+    const mangaId = String(payload.mangaId);
+    const chapterNum = parseFloat(payload.chapterNum);
+    const chapterStr = String(chapterNum);
+
+    // 1. Update Mangas sheet
+    const mangaSheet = getSheet();
+    const mData = mangaSheet.getDataRange().getValues();
+    const mHeaders = mData[0].map(h => h.toString().toLowerCase().trim());
+    const idCol = mHeaders.indexOf('mangaid') + 1;
+    const lastChapCol = mHeaders.indexOf('lastchapter') + 1;
+    const updatedCol = mHeaders.indexOf('lastupdated') + 1;
+
+    for (let i = 1; i < mData.length; i++) {
+      if (String(mData[i][idCol - 1]) === mangaId) {
+        if (lastChapCol > 0) mangaSheet.getRange(i + 1, lastChapCol).setValue(chapterStr);
+        if (updatedCol > 0) mangaSheet.getRange(i + 1, updatedCol).setValue(new Date());
+        break;
+      }
+    }
+    invalidateCache('mangaList');
+
+    // 2. Update RawTracker sheet
+    const rtSheet = getSheet(RAW_TRACKER_SHEET_NAME);
+    const rtData = rtSheet.getDataRange().getValues();
+    const rtHeaders = rtData[0].map(h => h.toString().toLowerCase().trim());
+    const rtMangaIdCol = rtHeaders.indexOf('mangaid') + 1;
+    const rtLastCountCol = rtHeaders.indexOf('lastrawcount') + 1;
+    const rtStatusCol = rtHeaders.indexOf('status') + 1;
+    const rtCheckedCol = rtHeaders.indexOf('lastchecked') + 1;
+
+    for (let j = 1; j < rtData.length; j++) {
+      if (String(rtData[j][rtMangaIdCol - 1]) === mangaId) {
+        const rawCount = parseFloat(rtData[j][rtLastCountCol - 1]) || 0;
+        let newStatus = 'เป็นปัจจุบัน';
+        if (rawCount > chapterNum) {
+          const diff = rawCount - chapterNum;
+          newStatus = 'มีตอนใหม่ (+' + diff + ' ตอน)';
+        }
+        if (rtStatusCol > 0) rtSheet.getRange(j + 1, rtStatusCol).setValue(newStatus);
+        if (rtCheckedCol > 0) rtSheet.getRange(j + 1, rtCheckedCol).setValue(new Date());
+        break;
+      }
+    }
+
+    return {
+      success: true,
+      message: 'อัปเดตสถานะตอน ' + chapterNum + ' ใน Mangas และ RawTracker สำเร็จ',
+      mangaId: mangaId,
+      newChapter: chapterStr
+    };
+  } catch (err) {
+    console.error('completeRawTrackerChapter error:', err);
+    return { error: err.toString() };
+  }
 }
 
 // ==========================================

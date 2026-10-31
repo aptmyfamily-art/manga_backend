@@ -25,6 +25,7 @@ import { SearchableSelect } from "@/components/ui/searchable-select"
 import { callGasApi } from "@/api/gasClient"
 import { isUrgentManga } from "@/lib/utils"
 import { toast } from "sonner"
+import { AutoRawPipelineModal } from "@/components/modals/AutoRawPipelineModal"
 import {
   Radio,
   RefreshCw,
@@ -97,6 +98,10 @@ export function RawTrackerView({
   const [editingItem, setEditingItem] = React.useState<RawTrackerItem | null>(
     null
   )
+
+  // Auto Raw Pipeline modal state
+  const [pipelineModalOpen, setPipelineModalOpen] = React.useState(false)
+  const [pipelineTargetTrackerId, setPipelineTargetTrackerId] = React.useState<string | null>(null)
   const [formMangaId, setFormMangaId] = React.useState("")
   const [formMangaName, setFormMangaName] = React.useState("")
   const [formUrl, setFormUrl] = React.useState("")
@@ -676,6 +681,24 @@ export function RawTrackerView({
 
           <Button
             size="sm"
+            onClick={() => {
+              setPipelineTargetTrackerId(null)
+              setPipelineModalOpen(true)
+            }}
+            className="h-9 bg-gradient-to-r from-pink-600 via-rose-600 to-indigo-600 hover:from-pink-700 hover:to-indigo-700 text-white font-bold shadow-lg shadow-pink-600/30 px-3.5"
+            title="ดาวน์โหลด เย็บ 20 หน้า อัป Drive และลงคิวงานอัตโนมัติสำหรับทุกเรื่องที่มีตอนใหม่ (พัก 5 นาทีระหว่างตอน)"
+          >
+            <Zap className="h-4 w-4 mr-1.5 fill-current animate-pulse text-amber-300" />
+            ⚡ อัป raw & ลงคิวงานอัตโนมัติ
+            {newUpdatesCount > 0 && (
+              <Badge className="ml-2 bg-white text-slate-900 font-extrabold text-[10px] px-1.5 py-0 h-4">
+                {newUpdatesCount}
+              </Badge>
+            )}
+          </Button>
+
+          <Button
+            size="sm"
             onClick={handleCheckAll}
             disabled={checkingAll}
             className="h-9 bg-indigo-600 hover:bg-indigo-700 text-white shadow-md shadow-indigo-600/20 font-semibold"
@@ -1186,6 +1209,21 @@ export function RawTrackerView({
                       ลงคิวงาน
                     </Button>
 
+                    {u.hasNew && (
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          setPipelineTargetTrackerId(item.trackerid)
+                          setPipelineModalOpen(true)
+                        }}
+                        className="h-8 px-2.5 text-xs font-bold bg-gradient-to-r from-pink-600 to-indigo-600 hover:from-pink-700 hover:to-indigo-700 text-white shadow-md shadow-pink-600/30"
+                        title="ดาวน์โหลด เย็บ 20 หน้า อัป Drive และลงคิวงานสำหรับเรื่องนี้ทันที"
+                      >
+                        <Zap className="h-3.5 w-3.5 mr-1 text-amber-300 fill-current" />
+                        อัป raw
+                      </Button>
+                    )}
+
                     <Button
                       variant="outline"
                       size="icon"
@@ -1439,6 +1477,21 @@ export function RawTrackerView({
                               ลงคิว
                             </Button>
 
+                            {u.hasNew && (
+                              <Button
+                                size="sm"
+                                className="h-8 px-2 text-xs font-bold bg-gradient-to-r from-pink-600 to-indigo-600 hover:from-pink-700 hover:to-indigo-700 text-white shadow-xs"
+                                onClick={() => {
+                                  setPipelineTargetTrackerId(item.trackerid)
+                                  setPipelineModalOpen(true)
+                                }}
+                                title="ดาวน์โหลด เย็บ 20 หน้า อัป Drive และลงคิวงานสำหรับเรื่องนี้ทันที"
+                              >
+                                <Zap className="h-3 w-3 mr-1 text-amber-300 fill-current" />
+                                อัป raw
+                              </Button>
+                            )}
+
                             <Button
                               size="icon"
                               variant="ghost"
@@ -1687,6 +1740,16 @@ export function RawTrackerView({
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* Auto Raw Pipeline Modal */}
+      <AutoRawPipelineModal
+        open={pipelineModalOpen}
+        onClose={() => setPipelineModalOpen(false)}
+        initialTrackerId={pipelineTargetTrackerId}
+        onSuccess={() => {
+          refetch()
+        }}
+      />
     </div>
   )
 }
