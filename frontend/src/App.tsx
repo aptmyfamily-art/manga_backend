@@ -80,6 +80,16 @@ export default function App() {
     null
   )
 
+  // Queue period filter (controls which month/year is fetched from GAS)
+  const nowInit = React.useMemo(() => new Date(), [])
+  const [queueMonth, setQueueMonth] = React.useState<string>(
+    String(nowInit.getMonth() + 1)
+  )
+  const [queueYear, setQueueYear] = React.useState<string>(
+    String(nowInit.getFullYear())
+  )
+  const [fetchingPeriod, setFetchingPeriod] = React.useState(false)
+
   // Countdown timer state
   const [lastFetchDate, setLastFetchDate] = React.useState<Date>(new Date())
   const [countdown, setCountdown] = React.useState(REFRESH_INTERVAL_SEC)
@@ -88,12 +98,13 @@ export default function App() {
     data: dashboardData,
     isLoading,
     isFetching,
-    refetch,
   } = useQuery({
     queryKey: ["dashboardData", passcode],
     queryFn: async () => {
       const res = await callGasApi("GET_DASHBOARD_DATA", {
         forceRefresh: false,
+        month: queueMonth,
+        year: queueYear,
       })
       setLastFetchDate(new Date())
       setCountdown(REFRESH_INTERVAL_SEC)
@@ -103,6 +114,36 @@ export default function App() {
     refetchInterval: REFRESH_INTERVAL_SEC * 1000,
     retry: 1,
   })
+
+  const handleQueuePeriodChange = async (newMonth: string, newYear: string) => {
+    setQueueMonth(newMonth)
+    setQueueYear(newYear)
+    setFetchingPeriod(true)
+    const toastId = "fetch-queue-period"
+    const label =
+      newMonth === "all" && newYear === "all"
+        ? "ทั้งหมดทุกปี"
+        : newMonth === "all"
+        ? `ทั้งปี ${Number(newYear) + 543}`
+        : `เดือน ${newMonth}/${Number(newYear) + 543}`
+    toast.loading(`กำลังดึงข้อมูลคิวงาน (${label})...`, { id: toastId })
+    try {
+      const newQueue = await callGasApi("GET_WORK_QUEUE", {
+        forceRefresh: false,
+        month: newMonth,
+        year: newYear,
+        includeIncomplete: false,
+      })
+      updateCachedField("queue", newQueue)
+      toast.success(`ดึงคิวงาน (${label}) สำเร็จ (${newQueue.length} รายการ)`, {
+        id: toastId,
+      })
+    } catch (err: any) {
+      toast.error(err.message || "ดึงข้อมูลคิวงานไม่สำเร็จ", { id: toastId })
+    } finally {
+      setFetchingPeriod(false)
+    }
+  }
 
   React.useEffect(() => {
     if (!passcode) return
@@ -119,6 +160,8 @@ export default function App() {
     try {
       const fresh = await callGasApi("GET_DASHBOARD_DATA", {
         forceRefresh: true,
+        month: queueMonth,
+        year: queueYear,
       })
       queryClient.setQueryData(["dashboardData", passcode], fresh)
       setLastFetchDate(new Date())
@@ -372,7 +415,10 @@ export default function App() {
               mangaList={mangaList}
               queueList={queueList}
               teamList={teamList}
-              isLoading={isLoading}
+              isLoading={isLoading || fetchingPeriod}
+              monthFilter={queueMonth}
+              yearFilter={queueYear}
+              onPeriodChange={handleQueuePeriodChange}
               initialSearch={queueSearchTerm}
               onClearInitialSearch={() => setQueueSearchTerm("")}
               onOpenAddQueue={() => {

@@ -122,7 +122,7 @@ function doPost(e) {
         result = initializeAllSheets();
         break;
       case 'GET_DASHBOARD_DATA':
-        result = getDashboardData(Boolean(payload.forceRefresh));
+        result = getDashboardData(Boolean(payload.forceRefresh), payload.month, payload.year);
         break;
       case 'GET_ALL_DATA':
         result = getAllData();
@@ -145,7 +145,7 @@ function doPost(e) {
 
       // --- WORK QUEUE CRUD ---
       case 'GET_WORK_QUEUE':
-        result = getWorkQueue(Boolean(payload.forceRefresh));
+        result = getWorkQueue(Boolean(payload.forceRefresh), payload.month, payload.year, Boolean(payload.includeIncomplete));
         break;
       case 'ADD_QUEUE':
         result = addQueue(payload);
@@ -700,11 +700,11 @@ function deleteManga(id) {
 /**
  * QUEUE OPERATIONS
  */
-function getWorkQueue(forceRefresh = false) {
+function getWorkQueue(forceRefresh = false, month = 'all', year = 'all', includeIncomplete = false) {
   if (forceRefresh) {
     invalidateCache('workQueue');
   }
-  return getCachedData('workQueue', () => {
+  const allQueue = getCachedData('workQueue', () => {
     try {
       const sheet = getSheet(QUEUE_SHEET_NAME);
       const data = sheet.getDataRange().getValues();
@@ -729,6 +729,25 @@ function getWorkQueue(forceRefresh = false) {
       return [];
     }
   }, 600);
+
+  const mStr = month !== undefined && month !== null && month !== '' ? String(month) : 'all';
+  const yStr = year !== undefined && year !== null && year !== '' ? String(year) : 'all';
+
+  if (mStr === 'all' && yStr === 'all') {
+    return allQueue;
+  }
+
+  return allQueue.filter(q => {
+    if (includeIncomplete && q.poststatus !== 'เสร็จแล้ว') {
+      return true;
+    }
+    if (!q.createdat) return false;
+    const d = new Date(q.createdat);
+    if (isNaN(d.getTime())) return false;
+    const mMatch = mStr === 'all' || String(d.getMonth() + 1) === mStr;
+    const yMatch = yStr === 'all' || String(d.getFullYear()) === yStr;
+    return mMatch && yMatch;
+  });
 }
 
 function addQueue(queueData) {
@@ -1680,13 +1699,16 @@ function getAllData() {
   };
 }
 
-function getDashboardData(forceRefresh = false) {
+function getDashboardData(forceRefresh = false, month, year) {
   if (forceRefresh) {
     invalidateCache(['mangaList', 'workQueue', 'teamList']);
   }
+  const now = new Date();
+  const targetMonth = month !== undefined && month !== null && month !== '' ? month : String(now.getMonth() + 1);
+  const targetYear = year !== undefined && year !== null && year !== '' ? year : String(now.getFullYear());
   return {
     manga: getMangaList(),
-    queue: getWorkQueue(forceRefresh),
+    queue: getWorkQueue(forceRefresh, targetMonth, targetYear, true),
     team: getTeamMembers(),
     sales: getMangaSales(),
     payees: getBudgetPayees(),

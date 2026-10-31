@@ -40,6 +40,9 @@ interface QueueViewProps {
   queueList: any[]
   teamList: any[]
   isLoading: boolean
+  monthFilter: string
+  yearFilter: string
+  onPeriodChange: (newMonth: string, newYear: string) => void
   initialSearch?: string
   onClearInitialSearch?: () => void
   onOpenAddQueue: () => void
@@ -52,6 +55,9 @@ export function QueueView({
   queueList,
   teamList,
   isLoading,
+  monthFilter,
+  yearFilter,
+  onPeriodChange,
   initialSearch,
   onClearInitialSearch,
   onOpenAddQueue,
@@ -60,10 +66,6 @@ export function QueueView({
 }: QueueViewProps) {
   const now = new Date()
   const [search, setSearch] = React.useState("")
-  const [monthFilter, setMonthFilter] = React.useState(
-    String(now.getMonth() + 1)
-  )
-  const [yearFilter, setYearFilter] = React.useState(String(now.getFullYear()))
   const [completionFilter, setCompletionFilter] = React.useState("incomplete")
   const [stepFilter, setStepFilter] = React.useState("all")
   const [urgentFilter, setUrgentFilter] = React.useState("all")
@@ -479,7 +481,7 @@ export function QueueView({
           <select
             className="flex h-10 w-full rounded-lg border border-[#26334d] bg-[#0b1120] px-3 py-2 text-sm text-slate-100"
             value={monthFilter}
-            onChange={(e) => setMonthFilter(e.target.value)}
+            onChange={(e) => onPeriodChange(e.target.value, yearFilter)}
           >
             <option value="all">เดือน: ทั้งหมด</option>
             {THAI_MONTHS.map((m, i) => (
@@ -492,7 +494,7 @@ export function QueueView({
           <select
             className="flex h-10 w-full rounded-lg border border-[#26334d] bg-[#0b1120] px-3 py-2 text-sm text-slate-100"
             value={yearFilter}
-            onChange={(e) => setYearFilter(e.target.value)}
+            onChange={(e) => onPeriodChange(monthFilter, e.target.value)}
           >
             <option value="all">ปี: ทั้งหมด</option>
             {years.map((y) => (
