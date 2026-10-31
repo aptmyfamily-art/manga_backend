@@ -68,6 +68,9 @@ export function ConnectorsView({ mangaList }: ConnectorsViewProps) {
   // Target comic ID for testing (default: 855368 = Chapter 366 of ข้าคือจอมวายร้ายผู้ยิ่งใหญ่)
   const [comicIdInput, setComicIdInput] = React.useState("855368")
 
+  // Stitch Mode: "total20" (แบ่งภาพทั้งหมดให้ได้ครบ 20 ไฟล์) vs "slices20" (รวมไฟล์ละ 20 ชิ้น)
+  const [stitchMode, setStitchMode] = React.useState<"total20" | "slices20">("total20")
+
   // Test Chapter State
   const [testingChapter, setTestingChapter] = React.useState(false)
   const [testResult, setTestResult] = React.useState<any | null>(null)
@@ -270,15 +273,17 @@ export function ConnectorsView({ mangaList }: ConnectorsViewProps) {
 
     const allUrls = rawUrls.map(normalizeKuaikanImageUrl).filter(Boolean)
     const totalPages = allUrls.length
-    const TARGET_TOTAL_PAGES = 20
-    const totalParts = Math.min(TARGET_TOTAL_PAGES, totalPages)
+    const totalParts =
+      stitchMode === "slices20"
+        ? Math.ceil(totalPages / 20)
+        : Math.min(20, totalPages)
 
     setStitching(true)
     setDriveAuthError(null)
     setStitchProgress({
       currentPart: 0,
       totalParts,
-      pageRange: `เริ่มต้นคำนวณ (ทั้งหมด ${totalPages} ชิ้น -> รวมเป็น ${totalParts} หน้า)`,
+      pageRange: `เริ่มต้นคำนวณ (${stitchMode === "total20" ? `ทั้งหมด ${totalPages} ชิ้น -> แบ่งเป็น ${totalParts} ไฟล์` : `ทั้งหมด ${totalPages} ชิ้น -> ไฟล์ละ 20 ชิ้น รวมเป็น ${totalParts} ไฟล์`})`,
       percent: 5,
       statusText: "กำลังวิเคราะห์ความกว้างมาตรฐานจากหน้ากลาง...",
     })
@@ -303,24 +308,32 @@ export function ConnectorsView({ mangaList }: ConnectorsViewProps) {
         } catch (e2) {}
       }
 
-      toast.info(`📏 ความกว้างมาตรฐาน: ${standardWidth}px (คำนวณรวมเป็น ${totalParts} หน้า)`)
+      toast.info(`📏 ความกว้างมาตรฐาน: ${standardWidth}px (${stitchMode === "total20" ? `แบ่งรวมเป็น ${totalParts} ไฟล์` : `ไฟล์ละ 20 ชิ้น รวมเป็น ${totalParts} ไฟล์`})`)
 
       let lastFolderUrl = ""
 
-      // 2. คำนวณแบ่งภาพทั้งหมดออกมาให้ได้ 20 หน้า
+      // 2. คำนวณแบ่งภาพตามโหมดที่เลือก
       for (let partIdx = 0; partIdx < totalParts; partIdx++) {
-        const startIdx = Math.round((partIdx * totalPages) / totalParts)
-        const endIdx = Math.round(((partIdx + 1) * totalPages) / totalParts)
+        let startIdx = 0
+        let endIdx = 0
+        if (stitchMode === "slices20") {
+          startIdx = partIdx * 20
+          endIdx = Math.min((partIdx + 1) * 20, totalPages)
+        } else {
+          startIdx = Math.round((partIdx * totalPages) / totalParts)
+          endIdx = Math.round(((partIdx + 1) * totalPages) / totalParts)
+        }
+
         const partNum = partIdx + 1
         const sliceCount = endIdx - startIdx
-        const partRange = `ชิ้นที่ ${startIdx + 1} - ${endIdx} (${sliceCount} ชิ้น)`
+        const partRange = `หน้า ${partNum}/${totalParts} (ชิ้นที่ ${startIdx + 1} - ${endIdx})`
 
         setStitchProgress({
           currentPart: partNum,
           totalParts,
           pageRange: partRange,
           percent: Math.round((partIdx / totalParts) * 100),
-          statusText: `กำลังโหลดและเย็บหน้า ${partNum}/${totalParts} (${sliceCount} ชิ้น)...`,
+          statusText: `กำลังโหลดและเย็บไฟล์ Part_${String(partNum).padStart(2, "0")}.webp (หน้าที่ ${partNum} จากทั้งหมด ${totalParts} หน้า, รวม ${sliceCount} ชิ้น)...`,
         })
 
         // 2.1 โหลดภาพใน Part นี้พร้อมระบบ Auto-Retry วนซ้ำต่อเนื่อง
@@ -389,7 +402,7 @@ export function ConnectorsView({ mangaList }: ConnectorsViewProps) {
           totalParts,
           pageRange: partRange,
           percent: Math.round(((partIdx + 0.6) / totalParts) * 100),
-          statusText: `กำลังอัปโหลด ${fileName} ขึ้น แปลจนเมื่อย...`,
+          statusText: `กำลังอัปโหลด ${fileName} (หน้า ${partNum}/${totalParts}) ขึ้น แปลจนเมื่อย...`,
         })
 
         const isLast = partIdx === totalParts - 1
@@ -926,15 +939,47 @@ export function ConnectorsView({ mangaList }: ConnectorsViewProps) {
                       </p>
                     </div>
 
-                    <Button
-                      size="sm"
-                      onClick={handleStitchAndUpload}
-                      disabled={stitching}
-                      className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold shadow-md text-xs gap-1.5"
-                    >
-                      <Layers className={`h-3.5 w-3.5 ${stitching ? "animate-spin" : ""}`} />
-                      {stitching ? "กำลังเย็บและอัปโหลด..." : "เย็บ 20 หน้า & ส่งขึ้น Drive (Auto-Retry)"}
-                    </Button>
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-2.5">
+                      {/* Mode Selector */}
+                      <div className="flex items-center rounded-lg border border-[#26334d] bg-[#0b0f19] p-0.5 text-[11px]">
+                        <button
+                          type="button"
+                          onClick={() => setStitchMode("total20")}
+                          className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
+                            stitchMode === "total20"
+                              ? "bg-indigo-600 text-white font-bold shadow-xs"
+                              : "text-slate-400 hover:text-slate-200"
+                          }`}
+                        >
+                          แบ่งรวมเป็น 20 หน้า (20 ไฟล์)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setStitchMode("slices20")}
+                          className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
+                            stitchMode === "slices20"
+                              ? "bg-indigo-600 text-white font-bold shadow-xs"
+                              : "text-slate-400 hover:text-slate-200"
+                          }`}
+                        >
+                          เย็บไฟล์ละ 20 ชิ้น (~7 ไฟล์)
+                        </button>
+                      </div>
+
+                      <Button
+                        size="sm"
+                        onClick={handleStitchAndUpload}
+                        disabled={stitching}
+                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold shadow-md text-xs gap-1.5"
+                      >
+                        <Layers className={`h-3.5 w-3.5 ${stitching ? "animate-spin" : ""}`} />
+                        {stitching
+                          ? "กำลังเย็บและอัปโหลด..."
+                          : stitchMode === "total20"
+                          ? "เย็บแบ่งเป็น 20 หน้า & ส่งขึ้น Drive"
+                          : "เย็บไฟล์ละ 20 ชิ้น & ส่งขึ้น Drive"}
+                      </Button>
+                    </div>
                   </div>
 
                   {/* Sample Images Gallery */}
@@ -980,7 +1025,7 @@ export function ConnectorsView({ mangaList }: ConnectorsViewProps) {
                   <div className="flex items-center justify-between text-xs">
                     <span className="font-semibold text-indigo-300 flex items-center gap-1.5">
                       <Layers className="h-4 w-4 text-indigo-400 animate-spin" />
-                      สถานะการเย็บและอัปโหลด: {stitchProgress.pageRange}
+                      สถานะ: {stitchProgress.pageRange} (กำลังประมวลผลหน้าที่ {stitchProgress.currentPart} จากทั้งหมด {stitchProgress.totalParts} หน้า)
                     </span>
                     <span className="font-mono font-bold text-amber-300">
                       {stitchProgress.percent}%

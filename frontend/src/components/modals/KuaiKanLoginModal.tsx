@@ -195,6 +195,9 @@ export function KuaiKanLoginModal({
   const [downloading, setDownloading] = React.useState(false)
   const [downloadResult, setDownloadResult] = React.useState<any | null>(null)
 
+  // Stitch Mode: "total20" (แบ่งภาพทั้งหมดให้ได้ครบ 20 ไฟล์) vs "slices20" (รวมไฟล์ละ 20 ชิ้น)
+  const [stitchMode, setStitchMode] = React.useState<"total20" | "slices20">("total20")
+
   // Stitch & Upload state (เย็บ 20 หน้า/ไฟล์ ลง Google Drive แปลจนเมื่อย)
   const [stitching, setStitching] = React.useState(false)
   const [stitchProgress, setStitchProgress] = React.useState<{
@@ -594,15 +597,17 @@ export function KuaiKanLoginModal({
 
     const allUrls = rawUrls.map(normalizeKuaikanImageUrl).filter(Boolean)
     const totalPages = allUrls.length
-    const TARGET_TOTAL_PAGES = 20
-    const totalParts = Math.min(TARGET_TOTAL_PAGES, totalPages)
+    const totalParts =
+      stitchMode === "slices20"
+        ? Math.ceil(totalPages / 20)
+        : Math.min(20, totalPages)
 
     setStitching(true)
     setDriveAuthError(null)
     setStitchProgress({
       currentPart: 0,
       totalParts,
-      pageRange: `เริ่มต้นคำนวณ (ทั้งหมด ${totalPages} ชิ้น -> ${totalParts} หน้า)`,
+      pageRange: `เริ่มต้นคำนวณ (${stitchMode === "total20" ? `ทั้งหมด ${totalPages} ชิ้น -> แบ่งเป็น ${totalParts} ไฟล์` : `ทั้งหมด ${totalPages} ชิ้น -> ไฟล์ละ 20 ชิ้น รวมเป็น ${totalParts} ไฟล์`})`,
       percent: 5,
       statusText: "กำลังวิเคราะห์ความกว้างมาตรฐานจากหน้ากลาง...",
     })
@@ -627,24 +632,32 @@ export function KuaiKanLoginModal({
         } catch (e2) {}
       }
 
-      toast.info(`📏 ความกว้างมาตรฐาน: ${standardWidth}px (คำนวณรวมเป็น ${totalParts} หน้า)`)
+      toast.info(`📏 ความกว้างมาตรฐาน: ${standardWidth}px (${stitchMode === "total20" ? `แบ่งรวมเป็น ${totalParts} ไฟล์` : `ไฟล์ละ 20 ชิ้น รวมเป็น ${totalParts} ไฟล์`})`)
 
       let lastFolderUrl = ""
 
-      // 2. คำนวณแบ่งภาพทั้งหมดออกมาให้ได้ 20 หน้า
+      // 2. คำนวณแบ่งภาพตามโหมดที่เลือก
       for (let partIdx = 0; partIdx < totalParts; partIdx++) {
-        const startIdx = Math.round((partIdx * totalPages) / totalParts)
-        const endIdx = Math.round(((partIdx + 1) * totalPages) / totalParts)
+        let startIdx = 0
+        let endIdx = 0
+        if (stitchMode === "slices20") {
+          startIdx = partIdx * 20
+          endIdx = Math.min((partIdx + 1) * 20, totalPages)
+        } else {
+          startIdx = Math.round((partIdx * totalPages) / totalParts)
+          endIdx = Math.round(((partIdx + 1) * totalPages) / totalParts)
+        }
+
         const partNum = partIdx + 1
         const sliceCount = endIdx - startIdx
-        const partRange = `ชิ้นที่ ${startIdx + 1} - ${endIdx} (${sliceCount} ชิ้น)`
+        const partRange = `หน้า ${partNum}/${totalParts} (ชิ้นที่ ${startIdx + 1} - ${endIdx})`
 
         setStitchProgress({
           currentPart: partNum,
           totalParts,
           pageRange: partRange,
           percent: Math.round((partIdx / totalParts) * 100),
-          statusText: `กำลังโหลดและเย็บหน้า ${partNum}/${totalParts} (${sliceCount} ชิ้น)...`,
+          statusText: `กำลังโหลดและเย็บไฟล์ Part_${String(partNum).padStart(2, "0")}.webp (หน้าที่ ${partNum} จากทั้งหมด ${totalParts} หน้า, รวม ${sliceCount} ชิ้น)...`,
         })
 
         // 2.1 โหลดภาพใน Part นี้ (พร้อมระบบ Auto-Retry ต่อเนื่องจนได้ภาพครบจริง)
@@ -1207,45 +1220,77 @@ export function KuaiKanLoginModal({
                   {/* Actions: Stitch 20 pages or Download Raw */}
                   {testResult.isVipUnlocked && testResult.imagesCount > 1 && (
                     <div className="pt-2 border-t border-[#1e293b] space-y-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <Button
-                          size="sm"
-                          onClick={handleStitchAndUpload}
-                          disabled={stitching || downloading}
-                          className="flex-1 h-8 text-xs bg-emerald-600 hover:bg-emerald-500 text-white font-semibold shadow-md shadow-emerald-950 flex items-center justify-center gap-1.5 cursor-pointer"
-                        >
-                          {stitching ? (
-                            <>
-                              <RefreshCw className="h-3.5 w-3.5 animate-spin mr-1" />
-                              กำลังเย็บ & อัปโหลด...
-                            </>
-                          ) : (
-                            <>
-                              <Scissors className="h-3.5 w-3.5 mr-1" />
-                              รวมภาพให้ได้ 20 หน้า & เซฟลง Drive
-                            </>
-                          )}
-                        </Button>
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        {/* Mode Selector */}
+                        <div className="flex items-center rounded-lg border border-[#1e293b] bg-black/40 p-0.5 text-[10px]">
+                          <button
+                            type="button"
+                            onClick={() => setStitchMode("total20")}
+                            className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
+                              stitchMode === "total20"
+                                ? "bg-indigo-600 text-white font-bold"
+                                : "text-slate-400 hover:text-slate-200"
+                            }`}
+                          >
+                            แบ่งเป็น 20 หน้า (20 ไฟล์)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setStitchMode("slices20")}
+                            className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
+                              stitchMode === "slices20"
+                                ? "bg-indigo-600 text-white font-bold"
+                                : "text-slate-400 hover:text-slate-200"
+                            }`}
+                          >
+                            ไฟล์ละ 20 ชิ้น (~7 ไฟล์)
+                          </button>
+                        </div>
 
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={handleDownloadChapter}
-                          disabled={stitching || downloading}
-                          className="h-8 text-xs border-[#1e293b] bg-[#141c2e] hover:bg-slate-800 text-slate-200 shrink-0"
-                          title="ดาวน์โหลดภาพดิบทั้งหมดแยกเป็นไฟล์เดี่ยวๆ"
-                        >
-                          {downloading ? (
-                            <RefreshCw className="h-3 w-3 animate-spin" />
-                          ) : (
-                            <>
-                              <Download className="h-3 w-3 mr-1" /> Raw ({testResult.imagesCount})
-                            </>
-                          )}
-                        </Button>
+                        <div className="flex items-center gap-2 flex-1">
+                          <Button
+                            size="sm"
+                            onClick={handleStitchAndUpload}
+                            disabled={stitching || downloading}
+                            className="flex-1 h-8 text-xs bg-emerald-600 hover:bg-emerald-500 text-white font-semibold shadow-md shadow-emerald-950 flex items-center justify-center gap-1.5 cursor-pointer"
+                          >
+                            {stitching ? (
+                              <>
+                                <RefreshCw className="h-3.5 w-3.5 animate-spin mr-1" />
+                                กำลังเย็บ & อัปโหลด...
+                              </>
+                            ) : (
+                              <>
+                                <Scissors className="h-3.5 w-3.5 mr-1" />
+                                {stitchMode === "total20"
+                                  ? "เย็บแบ่งเป็น 20 หน้า & เซฟลง Drive"
+                                  : "เย็บไฟล์ละ 20 ชิ้น & เซฟลง Drive"}
+                              </>
+                            )}
+                          </Button>
+
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={handleDownloadChapter}
+                            disabled={stitching || downloading}
+                            className="h-8 text-xs border-[#1e293b] bg-[#141c2e] hover:bg-slate-800 text-slate-200 shrink-0"
+                            title="ดาวน์โหลดภาพดิบทั้งหมดแยกเป็นไฟล์เดี่ยวๆ"
+                          >
+                            {downloading ? (
+                              <RefreshCw className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <>
+                                <Download className="h-3 w-3 mr-1" /> Raw ({testResult.imagesCount})
+                              </>
+                            )}
+                          </Button>
+                        </div>
                       </div>
                       <div className="text-[10px] text-slate-400 text-center">
-                        ✂️ คำนวณรวมภาพทั้งหมดออกมาให้ได้ 20 หน้า (ความกว้างมาตรฐานเท่ากัน ปรับสเกลหน้าปกให้อัตโนมัติ)
+                        ✂️ {stitchMode === "total20"
+                          ? "คำนวณรวมภาพทั้งหมดออกมาให้ได้ 20 หน้าพอดี (ความกว้างมาตรฐานเท่ากัน)"
+                          : "เย็บรวมภาพส่วนละ 20 ชิ้น (ความกว้างมาตรฐานเท่ากัน)"}
                       </div>
                     </div>
                   )}
