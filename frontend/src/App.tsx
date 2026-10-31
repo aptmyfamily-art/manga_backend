@@ -9,6 +9,7 @@ import {
 import { PasscodeGate } from "@/components/views/PasscodeGate"
 import { DashboardView } from "@/components/views/DashboardView"
 import { QueueView } from "@/components/views/QueueView"
+import { ExpensesView } from "@/components/views/ExpensesView"
 import { TeamView } from "@/components/views/TeamView"
 import { FinancialsView } from "@/components/views/FinancialsView"
 import { BudgetView } from "@/components/views/BudgetView"
@@ -31,6 +32,7 @@ import { Label } from "@/components/ui/label"
 import {
   LayoutDashboard,
   ClipboardList,
+  Receipt,
   Users,
   TrendingUp,
   Wallet,
@@ -46,19 +48,58 @@ import {
 type ViewKey =
   | "dashboard"
   | "queue"
+  | "expenses"
   | "team"
   | "financials"
   | "budget"
   | "settings"
 
-const REFRESH_INTERVAL_SEC = 600 // 10 minutes
+function getViewFromLocation(): ViewKey {
+  const path = window.location.pathname.replace(/^\/+|\/+$/g, "").toLowerCase()
+  const validViews: ViewKey[] = [
+    "dashboard",
+    "queue",
+    "expenses",
+    "team",
+    "financials",
+    "budget",
+    "settings",
+  ]
+  if (validViews.includes(path as ViewKey)) {
+    return path as ViewKey
+  }
+  return "dashboard"
+}
 
 export default function App() {
   const queryClient = useQueryClient()
   const [passcode, setPasscode] = React.useState<string>(getSavedPasscode())
-  const [activeView, setActiveView] = React.useState<ViewKey>("dashboard")
+  const [activeView, setActiveView] = React.useState<ViewKey>(getViewFromLocation)
   const [sidebarOpen, setSidebarOpen] = React.useState(false)
   const [queueSearchTerm, setQueueSearchTerm] = React.useState("")
+
+  const changeView = (view: ViewKey) => {
+    setActiveView(view)
+    const targetPath = `/${view}`
+    if (window.location.pathname !== targetPath) {
+      window.history.pushState(null, "", targetPath)
+    }
+  }
+
+  React.useEffect(() => {
+    const onPopState = () => {
+      setActiveView(getViewFromLocation())
+    }
+    window.addEventListener("popstate", onPopState)
+    return () => window.removeEventListener("popstate", onPopState)
+  }, [])
+
+  // Sync initial clean URL on mount if at root
+  React.useEffect(() => {
+    if (window.location.pathname === "/" || window.location.pathname === "") {
+      window.history.replaceState(null, "", `/${activeView}`)
+    }
+  }, [activeView])
 
   // Sensitive view passcode modal (Financials / Budget)
   const [sensitiveGateOpen, setSensitiveGateOpen] = React.useState(false)
@@ -239,7 +280,7 @@ export default function App() {
       setSensitiveGateOpen(true)
       return
     }
-    setActiveView(view)
+    changeView(view)
   }
 
   const handleVerifySensitivePass = async (e: React.FormEvent) => {
@@ -253,7 +294,7 @@ export default function App() {
       if (res && res.valid) {
         setSensitiveGateOpen(false)
         if (pendingSensitiveView) {
-          setActiveView(pendingSensitiveView)
+          changeView(pendingSensitiveView)
           setPendingSensitiveView(null)
         }
       } else {
@@ -283,6 +324,7 @@ export default function App() {
   const navItems: Array<{ id: ViewKey; label: string; icon: any }> = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
     { id: "queue", label: "จัดการคิวงาน", icon: ClipboardList },
+    { id: "expenses", label: "สรุปรายจ่ายรายเดือน", icon: Receipt },
     { id: "team", label: "จัดการทีมงาน", icon: Users },
     { id: "financials", label: "รายงานกำไร-ขาดทุน", icon: TrendingUp },
     { id: "budget", label: "งบประมาณ & บัญชี", icon: Wallet },
@@ -418,7 +460,7 @@ export default function App() {
               isLoading={loadingInitial}
               onSwitchToQueue={(term) => {
                 if (term) setQueueSearchTerm(term)
-                setActiveView("queue")
+                changeView("queue")
               }}
               onOpenUpdateQueue={(q) => {
                 setEditingQueueItem(q)
@@ -448,6 +490,14 @@ export default function App() {
                 setUpdateQueueOpen(true)
               }}
               onQueueChange={updateQueueCache}
+            />
+          )}
+
+          {activeView === "expenses" && (
+            <ExpensesView
+              mangaList={mangaList}
+              teamList={teamList}
+              passcode={passcode}
             />
           )}
 
