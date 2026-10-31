@@ -26,7 +26,8 @@ import {
   Clock,
   ShieldCheck,
   RefreshCw,
-  FolderOpen
+  FolderOpen,
+  Github
 } from "lucide-react"
 
 export interface PendingChapterTask {
@@ -524,17 +525,31 @@ export function AutoRawPipelineModal({
               </div>
             </div>
 
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={fetchPendingTasks}
-              disabled={isRunning || loadingTasks}
-              className="text-slate-400 hover:text-white hover:bg-slate-800"
-              title="รีเฟรชรายการตอนใหม่"
-            >
-              <RefreshCw className={`h-4 w-4 mr-1.5 ${loadingTasks ? "animate-spin" : ""}`} />
-              รีเฟรช
-            </Button>
+            <div className="flex items-center gap-2">
+              <a
+                href="https://github.com/mangahub888/mangahub888.github.io/actions/workflows/auto_raw_tracker.yml"
+                target="_blank"
+                rel="noreferrer"
+                className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800/90 hover:bg-slate-700 text-slate-200 border border-slate-700 hover:border-slate-600 transition shadow-sm"
+                title="สั่งรันใน Cloud ผ่าน GitHub Actions ไม่ต้องเปิดหน้าเว็บหรือคอมพิวเตอร์ทิ้งไว้"
+              >
+                <Github className="h-3.5 w-3.5 text-white" />
+                รันบน GitHub Actions
+                <ExternalLink className="h-3 w-3 text-slate-400" />
+              </a>
+
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={fetchPendingTasks}
+                disabled={isRunning || loadingTasks}
+                className="text-slate-400 hover:text-white hover:bg-slate-800"
+                title="รีเฟรชรายการตอนใหม่"
+              >
+                <RefreshCw className={`h-4 w-4 mr-1.5 ${loadingTasks ? "animate-spin" : ""}`} />
+                รีเฟรช
+              </Button>
+            </div>
           </div>
         </DialogHeader>
 

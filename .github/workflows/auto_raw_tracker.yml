@@ -1,0 +1,47 @@
+name: Auto Raw Tracker Pipeline
+
+on:
+  schedule:
+    # รันอัตโนมัติทุก 4 ชั่วโมง (เช่น 00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC)
+    - cron: '0 */4 * * *'
+  workflow_dispatch:
+    inputs:
+      cooldown_seconds:
+        description: 'Cooldown seconds between chapters (default: 300 = 5 minutes)'
+        required: false
+        default: '300'
+      max_chapters:
+        description: 'Maximum chapters to process (0 = all pending chapters)'
+        required: false
+        default: '0'
+
+concurrency:
+  group: auto-raw-tracker
+  cancel-in-progress: false
+
+jobs:
+  stitch-and-upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360 # รองรับการรันสูงสุด 6 ชั่วโมง
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pillow
+
+      - name: Run Auto Raw Pipeline
+        env:
+          COOLDOWN_SECONDS: ${{ github.event.inputs.cooldown_seconds || '300' }}
+          MAX_CHAPTERS: ${{ github.event.inputs.max_chapters || '0' }}
+        run: |
+          python tools/auto_raw_tracker.py

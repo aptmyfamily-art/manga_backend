@@ -10,10 +10,10 @@ from PIL import Image
 
 sys.stdout.reconfigure(encoding='utf-8')
 
-GAS_URL = "https://script.google.com/macros/s/AKfycbzG1H1eBoTsF7Omfso8v23N6HidWXU4kS-yyf0xDunb2BoZgPiUYPIOO2vMLSvYWwHsnw/exec"
-PASSCODE = "10211032"
+GAS_URL = os.environ.get("GAS_URL", "https://script.google.com/macros/s/AKfycbzG1H1eBoTsF7Omfso8v23N6HidWXU4kS-yyf0xDunb2BoZgPiUYPIOO2vMLSvYWwHsnw/exec")
+PASSCODE = os.environ.get("PASSCODE", "10211032")
 TARGET_TOTAL_PAGES = 20
-COOLDOWN_SECONDS = 300  # พัก 5 นาทีระหว่างตอน
+COOLDOWN_SECONDS = int(os.environ.get("COOLDOWN_SECONDS", "300"))  # พัก 5 นาทีระหว่างตอน (หรือปรับแต่งได้)
 
 def call_gas(action, payload=None, retries=3):
     body = {
@@ -88,9 +88,25 @@ def download_image(item, retries=3):
 
 def countdown_sleep(seconds):
     """
-    นับถอยหลังพักระหว่างตอนแบบ Real-time terminal timer
+    นับถอยหลังพักระหว่างตอน (รองรับทั้ง Terminal และ GitHub Actions CI/CD)
     """
     print(f"\n☕ จบตอนแล้ว! พัก {seconds // 60} นาที เพื่อความปลอดภัยของบัญชี KuaiKan VIP...")
+    
+    # ถ้าเป็น CI/CD เช่น GitHub Actions (ไม่มี interactive TTY)
+    if not sys.stdout.isatty():
+        step = 60
+        remaining = seconds
+        while remaining > 0:
+            mins = remaining // 60
+            secs = remaining % 60
+            print(f"   ⏳ นับถอยหลังพัก: {mins:02d}:{secs:02d} ...", flush=True)
+            sleep_time = min(step, remaining)
+            time.sleep(sleep_time)
+            remaining -= sleep_time
+        print("   ✓ ครบเวลาพักแล้ว เริ่มทำตอนถัดไปทันที!\n", flush=True)
+        return
+
+    # ถ้าเป็น Local Terminal
     for remaining in range(seconds, 0, -1):
         mins = remaining // 60
         secs = remaining % 60
@@ -247,6 +263,11 @@ def main():
 
     data = res["data"]
     tasks = data.get("tasks", [])
+    max_chapters = int(os.environ.get("MAX_CHAPTERS", "0"))
+    if max_chapters > 0 and len(tasks) > max_chapters:
+        print(f"⚙️ จำกัดการรันสูงสุด {max_chapters} ตอน (จากทั้งหมด {len(tasks)} ตอน)")
+        tasks = tasks[:max_chapters]
+
     total_tasks = len(tasks)
     print(f"✓ พบตอนใหม่ที่รออัป raw ทั้งหมด {total_tasks} ตอน:")
     for idx, t in enumerate(tasks):
