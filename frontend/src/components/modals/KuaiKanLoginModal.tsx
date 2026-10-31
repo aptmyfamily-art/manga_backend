@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { callGasApi } from "@/api/gasClient"
 import { toast } from "sonner"
 import {
+  Zap,
   QrCode,
   KeyRound,
   RefreshCw,
@@ -24,6 +25,9 @@ import {
   FolderOpen,
   Image as ImageIcon,
   LogOut,
+  Copy,
+  Bookmark,
+  Terminal,
 } from "lucide-react"
 
 interface KuaiKanLoginModalProps {
@@ -32,12 +36,15 @@ interface KuaiKanLoginModalProps {
   onSuccess?: () => void
 }
 
+const GAS_EXEC_URL =
+  "https://script.google.com/macros/s/AKfycbzG1H1eBoTsF7Omfso8v23N6HidWXU4kS-yyf0xDunb2BoZgPiUYPIOO2vMLSvYWwHsnw/exec"
+
 export function KuaiKanLoginModal({
   open,
   onClose,
   onSuccess,
 }: KuaiKanLoginModalProps) {
-  const [activeTab, setActiveTab] = React.useState<"qr" | "cookie">("qr")
+  const [activeTab, setActiveTab] = React.useState<"1click" | "qr" | "cookie">("1click")
 
   // Session state
   const [loadingSession, setLoadingSession] = React.useState(false)
@@ -60,6 +67,7 @@ export function KuaiKanLoginModal({
   const [qrStatusText, setQrStatusText] = React.useState<string>("รอการสแกน...")
   const [scanState, setScanState] = React.useState<"waiting" | "scanned" | "success" | "expired" | "idle">("idle")
   const pollingRef = React.useRef<boolean>(false)
+  const autoDetectRef = React.useRef<boolean>(false)
 
   // Manual Cookie state
   const [cookieInput, setCookieInput] = React.useState("")
@@ -73,30 +81,71 @@ export function KuaiKanLoginModal({
   const [downloading, setDownloading] = React.useState(false)
   const [downloadResult, setDownloadResult] = React.useState<any | null>(null)
 
+  // Bookmarklet JavaScript Code
+  const bookmarkletCode = React.useMemo(() => {
+    return `javascript:(function(){try{var c=document.cookie;if(!c||(!c.includes('passToken')&&!c.includes('connect.sid')&&!c.includes('uid'))){alert('⚠️ ไม่พบคุกกี้ KuaiKan กรุณาเข้าสู่ระบบบนหน้านี้ก่อนครับ');return;}var b=document.createElement('div');b.id='mgh_sync';b.style.cssText='position:fixed;top:20px;right:20px;z-index:9999999;background:#0f172a;color:#fff;border:2px solid #10b981;padding:14px 18px;border-radius:12px;font-family:sans-serif;box-shadow:0 15px 35px rgba(0,0,0,0.6);font-size:13px;display:flex;align-items:center;gap:10px;';b.innerHTML='<span style=\"font-size:20px\">⏳</span><div><b style=\"color:#34d399\">MangaHub Sync</b><div style=\"color:#94a3b8;font-size:11px\">กำลังส่ง VIP Cookie ไปยัง MangaHub...</div></div>';var p=document.getElementById('mgh_sync');if(p)p.remove();document.body.appendChild(b);var u='${GAS_EXEC_URL}';fetch(u,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({action:'SAVE_KUAIKAN_AUTH',passcode:'10211032',payload:{directCookie:c}})}).then(function(){b.style.borderColor='#10b981';b.innerHTML='<span style=\"font-size:20px\">👑</span><div><b style=\"color:#34d399\">เชื่อมต่อสำเร็จ!</b><div style=\"color:#cbd5e1;font-size:11px\">ส่ง Cookie ให้ MangaHub แล้ว สลับแท็บกลับไปได้เลย</div></div>';setTimeout(function(){b.remove();},4000);}).catch(function(e){b.style.borderColor='#ef4444';b.innerHTML='<span style=\"font-size:20px\">❌</span><div><b style=\"color:#f87171\">ส่งไม่สำเร็จ</b><div style=\"color:#cbd5e1;font-size:11px\">'+e.message+'</div></div>';setTimeout(function(){b.remove();},5000);});}catch(e){alert('Error: '+e.message);}})();`
+  }, [])
+
+  // Console One-liner Code
+  const consoleCode = React.useMemo(() => {
+    return `fetch('${GAS_EXEC_URL}', {method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({action:'SAVE_KUAIKAN_AUTH',passcode:'10211032',payload:{directCookie:document.cookie}})}).then(()=>alert('👑 ส่ง KuaiKan Cookie ให้ MangaHub สำเร็จแล้ว!'));`
+  }, [])
+
   // Check saved session on open
-  const fetchSessionStatus = React.useCallback(async () => {
-    setLoadingSession(true)
+  const fetchSessionStatus = React.useCallback(async (silent = false) => {
+    if (!silent) setLoadingSession(true)
     try {
       const res = await callGasApi<any>("GET_KUAIKAN_AUTH")
       setSessionStatus(res)
+      return res
     } catch (err: any) {
-      console.error("fetchSessionStatus error:", err)
+      if (!silent) console.error("fetchSessionStatus error:", err)
+      return null
     } finally {
-      setLoadingSession(false)
+      if (!silent) setLoadingSession(false)
     }
   }, [])
+
+  // Auto-detect incoming session sync every 2.5s while modal is open
+  React.useEffect(() => {
+    if (!open) {
+      autoDetectRef.current = false
+      return
+    }
+
+    autoDetectRef.current = true
+    let isInitial = true
+
+    const interval = setInterval(async () => {
+      if (!autoDetectRef.current) return
+      const res = await fetchSessionStatus(true)
+      if (res && res.loggedIn && !sessionStatus?.loggedIn && !isInitial) {
+        toast.success("👑 ตรวจพบ KuaiKan VIP เชื่อมต่อสำเร็จแล้ว!")
+        handleTestChapter()
+        if (onSuccess) onSuccess()
+      }
+      isInitial = false
+    }, 2500)
+
+    return () => {
+      autoDetectRef.current = false
+      clearInterval(interval)
+    }
+  }, [open, sessionStatus?.loggedIn, fetchSessionStatus, onSuccess])
 
   React.useEffect(() => {
     if (open) {
       fetchSessionStatus()
-      loadQrCode()
+      if (activeTab === "qr") {
+        loadQrCode()
+      }
     } else {
       pollingRef.current = false
     }
     return () => {
       pollingRef.current = false
     }
-  }, [open, fetchSessionStatus])
+  }, [open, activeTab, fetchSessionStatus])
 
   // Generate QR session
   const loadQrCode = async () => {
@@ -124,7 +173,7 @@ export function KuaiKanLoginModal({
     }
   }
 
-  // Poll WeChat QR Status (using dynamic script JSONP for zero-latency + fallback)
+  // Poll WeChat QR Status
   const startPolling = (uuid: string, state: string, cookies: string[]) => {
     pollingRef.current = true
 
@@ -132,7 +181,6 @@ export function KuaiKanLoginModal({
       if (!pollingRef.current) return
 
       try {
-        // Method 1: Try Browser JSONP
         const pollResult = await new Promise<{ errcode: number; code?: string }>((resolve) => {
           const scriptId = "wx_poll_script_" + Date.now()
           const script = document.createElement("script")
@@ -155,31 +203,25 @@ export function KuaiKanLoginModal({
           }
 
           script.onerror = () => {
-            // If browser blocks script or CORS, fallback to backend check
             finish({ errcode: -999 })
           }
 
           document.body.appendChild(script)
-
-          // Fallback timeout
           setTimeout(() => finish({ errcode: 408 }), 25000)
         })
 
         if (!pollingRef.current) return
 
         if (pollResult.errcode === 408) {
-          // Waiting for scan
           setScanState("waiting")
           setQrStatusText("รอการสแกน QR Code...")
           setTimeout(pollNext, 1200)
         } else if (pollResult.errcode === 404) {
-          // Scanned! Waiting for user to tap confirm on phone
           setScanState("scanned")
-          setQrStatusText("📲 สแกนสำเร็จแล้ว! กรุณากดยืนยัน (Log In) บนมือถือของคุณ...")
+          setQrStatusText("📲 สแกนสำเร็จแล้ว! กรุณากดยืนยัน (Log In) บนมือถือ...")
           toast.info("ตรวจพบการสแกน! กรุณากดยืนยันบน WeChat ในมือถือ")
           setTimeout(pollNext, 800)
         } else if (pollResult.errcode === 405 && pollResult.code) {
-          // Confirmed!
           setScanState("success")
           setQrStatusText("🎉 ยืนยันสำเร็จ! กำลังเชื่อมต่อและบันทึก Session...")
           toast.success("ยืนยันผ่าน WeChat สำเร็จ! กำลังบันทึกข้อมูล...")
@@ -193,20 +235,18 @@ export function KuaiKanLoginModal({
           if (saveRes && saveRes.success) {
             toast.success("บันทึก Session KuaiKan VIP เรียบร้อยแล้ว!")
             fetchSessionStatus()
+            handleTestChapter()
             if (onSuccess) onSuccess()
           } else {
             toast.error(saveRes?.error || "บันทึก Session ไม่สำเร็จ")
           }
         } else if (pollResult.errcode === 402) {
-          // Expired
           setScanState("expired")
           setQrStatusText("QR Code หมดอายุแล้ว กรุณากดรีเฟรช")
         } else if (pollResult.errcode === 403) {
-          // Cancelled
           setScanState("expired")
           setQrStatusText("คุณยกเลิกการเข้าสู่ระบบบนมือถือ")
         } else {
-          // Fallback to GAS Check
           const checkRes = await callGasApi<any>("CHECK_KUAIKAN_QR", {
             uuid,
             state,
@@ -225,6 +265,7 @@ export function KuaiKanLoginModal({
               setQrStatusText("🎉 เข้าสู่ระบบสำเร็จแล้ว!")
               toast.success("เข้าสู่ระบบ KuaiKan สำเร็จ!")
               fetchSessionStatus()
+              handleTestChapter()
               if (onSuccess) onSuccess()
             } else if (checkRes.status === "expired") {
               setScanState("expired")
@@ -248,7 +289,7 @@ export function KuaiKanLoginModal({
   // Handle direct manual cookie save
   const handleSaveCookie = async () => {
     if (!cookieInput.trim()) {
-      toast.error("กรุณาระบุ Cookie เช่น connect.sid=...")
+      toast.error("กรุณาระบุ Cookie เช่น passToken=... หรือ connect.sid=...")
       return
     }
 
@@ -262,6 +303,7 @@ export function KuaiKanLoginModal({
         toast.success("บันทึก Cookie สำเร็จ!")
         setCookieInput("")
         fetchSessionStatus()
+        handleTestChapter()
         if (onSuccess) onSuccess()
       } else {
         toast.error(res?.error || "บันทึก Cookie ไม่สำเร็จ")
@@ -281,7 +323,7 @@ export function KuaiKanLoginModal({
       toast.info("ออกจากระบบ KuaiKan เรียบร้อยแล้ว")
       setSessionStatus(null)
       setTestResult(null)
-      loadQrCode()
+      if (activeTab === "qr") loadQrCode()
     } catch (err: any) {
       toast.error(err.message || "เกิดข้อผิดพลาด")
     }
@@ -319,7 +361,7 @@ export function KuaiKanLoginModal({
     try {
       const res = await callGasApi<any>("DOWNLOAD_KUAIKAN_CHAPTER", {
         comicId: 855368,
-        mangaId: "1", // Target manga ID
+        mangaId: "1",
         chapter: "366",
         mangaName: "我！天命大反派",
       })
@@ -336,6 +378,12 @@ export function KuaiKanLoginModal({
     }
   }
 
+  // Copy to clipboard helper
+  const copyToClipboard = (text: string, msg: string) => {
+    navigator.clipboard.writeText(text)
+    toast.success(msg)
+  }
+
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-w-2xl bg-[#0d1322] border-[#26334d] text-slate-100 max-h-[92vh] overflow-y-auto">
@@ -349,11 +397,11 @@ export function KuaiKanLoginModal({
                 <DialogTitle className="text-lg font-bold text-white flex items-center gap-2">
                   เชื่อมต่อบัญชี KuaiKan VIP (快看漫画)
                   <span className="text-xs px-2 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-300">
-                    WeChat QR
+                    VIP / Session Sync
                   </span>
                 </DialogTitle>
                 <DialogDescription className="text-xs text-slate-400">
-                  สแกน WeChat QR Code เพื่อล็อกอิน VIP และเก็บ Session ลงหลังบ้านอัตโนมัติ
+                  ซิงค์คุกกี้ VIP จากเครื่องคอมพ์เข้าสู่หลังบ้าน MangaHub อัตโนมัติ (สไตล์ Hakuneko)
                 </DialogDescription>
               </div>
             </div>
@@ -410,8 +458,19 @@ export function KuaiKanLoginModal({
           )}
         </div>
 
-        {/* Tabs switcher */}
+        {/* Tabs switcher (3 Tabs) */}
         <div className="flex rounded-lg bg-[#151d2f] p-1 border border-[#26334d]">
+          <button
+            type="button"
+            onClick={() => setActiveTab("1click")}
+            className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+              activeTab === "1click"
+                ? "bg-emerald-600 text-white shadow-md shadow-emerald-900/30"
+                : "text-slate-400 hover:text-white"
+            }`}
+          >
+            <Zap className="h-4 w-4" /> ⚡ 1-Click ดูดคุกกี้ (แนะนำ)
+          </button>
           <button
             type="button"
             onClick={() => setActiveTab("qr")}
@@ -421,7 +480,7 @@ export function KuaiKanLoginModal({
                 : "text-slate-400 hover:text-white"
             }`}
           >
-            <QrCode className="h-4 w-4" /> สแกน QR Code ด้วย WeChat (แนะนำ)
+            <QrCode className="h-4 w-4" /> สแกน WeChat QR
           </button>
           <button
             type="button"
@@ -432,11 +491,95 @@ export function KuaiKanLoginModal({
                 : "text-slate-400 hover:text-white"
             }`}
           >
-            <KeyRound className="h-4 w-4" /> กรอก Cookie ด้วยตนเอง
+            <KeyRound className="h-4 w-4" /> กรอกคุกกี้เอง
           </button>
         </div>
 
-        {/* Tab 1: WeChat QR Code */}
+        {/* Tab 1: 1-Click Bookmarklet & Script (Recommended) */}
+        {activeTab === "1click" && (
+          <div className="p-5 rounded-xl border border-emerald-500/20 bg-[#151d2f]/70 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/20 text-emerald-400 shrink-0 mt-0.5">
+                <Bookmark className="h-4 w-4" />
+              </div>
+              <div className="space-y-1">
+                <div className="text-sm font-bold text-white flex items-center gap-2">
+                  วิธีที่ 1: ลากปุ่มนี้ขึ้น Bookmark Bar (คลิกเดียวส่งทันที)
+                </div>
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  ลากปุ่มสีเขียวด้านล่างนี้ไปวางไว้ที่ <b>แถบบุ๊กมาร์ก (Bookmarks Bar)</b> ของ Edge/Chrome ครั้งเดียว จากนั้นเมื่อคุณเปิดแท็บ{" "}
+                  <a
+                    href="https://www.kuaikanmanhua.com"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-indigo-400 underline inline-flex items-center gap-0.5"
+                  >
+                    kuaikanmanhua.com <ExternalLink className="h-3 w-3" />
+                  </a>{" "}
+                  ที่ล็อกอิน VIP ไว้ เพียงแค่คลิกปุ่มนี้ คุกกี้จะถูกส่งตรงเข้า MangaHub ทันที!
+                </p>
+              </div>
+            </div>
+
+            {/* Draggable Bookmarklet Button */}
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 p-4 rounded-xl bg-[#0d1322] border border-dashed border-emerald-500/40 text-center">
+              <a
+                href={bookmarkletCode}
+                onClick={(e) => {
+                  e.preventDefault()
+                  toast.info("💡 กรุณาลากปุ่มนี้ขึ้นไปวางบนแถบ Bookmark Bar ด้านบนของเบราว์เซอร์ครับ")
+                }}
+                className="px-5 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg shadow-emerald-900/40 flex items-center gap-2 cursor-grab active:cursor-grabbing border border-emerald-400/40 transition-transform hover:scale-105"
+                title="ลากปุ่มนี้ไปวางที่ Bookmarks Bar ของเบราว์เซอร์"
+              >
+                <Bookmark className="h-4 w-4" /> 📥 ส่ง VIP Cookie ให้ MangaHub
+              </a>
+              <span className="text-[11px] text-slate-400">
+                (จับปุ่มนี้แล้วลากขึ้นไปวางที่ Bookmarks Bar ได้เลย)
+              </span>
+            </div>
+
+            {/* Alternative: 1-line Console Snippet */}
+            <div className="pt-2 border-t border-[#26334d] space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                  <Terminal className="h-3.5 w-3.5 text-indigo-400" /> หรือวิธีที่ 2: กด F12 ที่หน้า KuaiKan แล้ววางโค้ดนี้
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => copyToClipboard(consoleCode, "คัดลอกโค้ดสคริปต์เรียบร้อย!")}
+                  className="h-7 text-xs border-[#26334d] text-indigo-300 hover:bg-indigo-500/10"
+                >
+                  <Copy className="h-3 w-3 mr-1" /> คัดลอกโค้ด 1 บรรทัด
+                </Button>
+              </div>
+              <div className="p-2.5 rounded-lg bg-[#0b0f19] border border-[#26334d] font-mono text-[11px] text-slate-300 truncate select-all">
+                {consoleCode}
+              </div>
+            </div>
+
+            {/* Local Runner Info (Hakuneko style) */}
+            <div className="p-3 rounded-lg bg-indigo-950/20 border border-indigo-500/20 text-[11px] text-slate-400 flex items-center justify-between">
+              <div>
+                <b className="text-indigo-300">💡 ต้องการรันผ่าน Command Line สไตล์ Hakuneko?</b>
+                <div className="text-[10px] text-slate-500 mt-0.5">
+                  รันคำสั่ง <code>node tools/kuaikan_sync.js</code> บนเครื่องคอมพ์ได้ทันที
+                </div>
+              </div>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => copyToClipboard("node tools/kuaikan_sync.js", "คัดลอกคำสั่งเรียบร้อย!")}
+                className="h-6 text-[10px] text-indigo-300 hover:bg-indigo-500/20"
+              >
+                <Copy className="h-3 w-3 mr-1" /> คัดลอกคำสั่ง
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* Tab 2: WeChat QR Code */}
         {activeTab === "qr" && (
           <div className="flex flex-col items-center justify-center p-6 rounded-xl border border-[#26334d] bg-[#151d2f]/50 space-y-4">
             <div className="relative flex flex-col items-center">
@@ -521,16 +664,16 @@ export function KuaiKanLoginModal({
           </div>
         )}
 
-        {/* Tab 2: Manual Cookie input */}
+        {/* Tab 3: Manual Cookie input */}
         {activeTab === "cookie" && (
           <div className="p-4 rounded-xl border border-[#26334d] bg-[#151d2f]/50 space-y-3">
             <div>
               <label className="text-xs font-medium text-slate-300 block mb-1">
-                วาง Cookie ของ KuaiKan (เช่น connect.sid=... หรือทั้งก้อน)
+                วาง Cookie ของ KuaiKan (เช่น passToken=... หรือทั้งก้อน)
               </label>
               <Textarea
                 rows={3}
-                placeholder="connect.sid=s%3A...; kk_s_t=...; uid=..."
+                placeholder="passToken=...; connect.sid=...; uid=..."
                 value={cookieInput}
                 onChange={(e) => setCookieInput(e.target.value)}
                 className="font-mono text-xs bg-[#0b0f19] border-[#26334d] text-slate-200"
@@ -546,8 +689,8 @@ export function KuaiKanLoginModal({
               >
                 kuaikanmanhua.com
               </a>{" "}
-              ที่ล็อกอิน VIP ไว้แล้ว &gt; กด F12 &gt; Application &gt; Cookies &gt; ดับเบิ้ลคลิกค่าที่{" "}
-              <code>connect.sid</code> แล้วนำมาวางที่นี่
+              ที่ล็อกอิน VIP ไว้ &gt; กด F12 &gt; Application &gt; Cookies &gt; ดับเบิ้ลคลิกค่าที่{" "}
+              <code>passToken</code> หรือ <code>connect.sid</code> แล้วนำมาวางที่นี่
             </div>
             <Button
               className="w-full bg-indigo-600 hover:bg-indigo-500 text-xs"
