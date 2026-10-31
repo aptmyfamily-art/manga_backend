@@ -308,6 +308,9 @@ function doPost(e) {
       case 'DOWNLOAD_KUAIKAN_CHAPTER':
         result = downloadKuaikanChapterToDrive(payload);
         break;
+      case 'UPLOAD_CHAPTER_STITCHED_PART':
+        result = uploadChapterStitchedPart(payload);
+        break;
 
       default:
         return createJsonResponse({ status: 'error', message: 'Unknown action: ' + action });
@@ -2925,7 +2928,7 @@ function normalizeKuaikanImageUrl(url) {
   if (!url) return '';
   let u = String(url).trim();
   u = u.replace(/https?:\/\/tn\d+(?:-f\d+)?\.kkmh\.com/g, 'https://f2.kkmh.com');
-  u = u.replace(/-t\.w\d+\.jpg.*$/i, '');
+  u = u.replace(/-t\.w\d+.*$/i, '');
   u = u.replace(/-w\d+.*$/i, '');
   return u;
 }
@@ -3024,8 +3027,8 @@ function testKuaikanLatestChapter(comicId, overrideCookie) {
   try {
     const targetComicId = comicId || 855368; // Chapter 366
     let cookie = overrideCookie;
+    const session = getKuaikanSessionData();
     if (!cookie) {
-      const session = getKuaikanSessionData();
       cookie = session ? session.cookie : '';
     }
 
@@ -3033,36 +3036,47 @@ function testKuaikanLatestChapter(comicId, overrideCookie) {
       cookie = 'connect.sid=' + cookie.trim();
     }
 
-    // 1. Try mobile/app API first
-    const url = 'https://api.kkmh.com/v2/comic/' + targetComicId + '?is_preview=0';
-    const res = UrlFetchApp.fetch(url, {
-      method: 'get',
-      muteHttpExceptions: true,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Referer': 'https://www.kuaikanmanhua.com/',
-        'Cookie': cookie || ''
-      }
-    });
-
     let rawImages = [];
     let title = '';
     let topicTitle = '';
     let isPay = false;
     let isLogin = false;
 
-    try {
-      const data = JSON.parse(res.getContentText());
-      if (data && data.data) {
-        const comic = data.data;
-        title = comic.title || '';
-        topicTitle = comic.topic ? comic.topic.title : '';
-        isPay = Boolean(comic.selling_kk_currency);
-        isLogin = Boolean(comic.is_login);
-        rawImages = comic.comic_images || comic.images || [];
+    // Priority 0: Check if session has stored allImages from client sync
+    if (session && session.test && session.test.allImages && session.test.allImages.length > 1 && (!comicId || comicId === session.test.comicId)) {
+      rawImages = session.test.allImages;
+      title = session.test.title || '';
+      topicTitle = session.test.topicTitle || '';
+      isPay = Boolean(session.test.isPay);
+      isLogin = Boolean(session.test.isLogin);
+    }
+
+    // 1. Try mobile/app API first if no cached images
+    if (!rawImages.length) {
+      const url = 'https://api.kkmh.com/v2/comic/' + targetComicId + '?is_preview=0';
+      const res = UrlFetchApp.fetch(url, {
+        method: 'get',
+        muteHttpExceptions: true,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Referer': 'https://www.kuaikanmanhua.com/',
+          'Cookie': cookie || ''
+        }
+      });
+
+      try {
+        const data = JSON.parse(res.getContentText());
+        if (data && data.data) {
+          const comic = data.data;
+          title = comic.title || '';
+          topicTitle = comic.topic ? comic.topic.title : '';
+          isPay = Boolean(comic.selling_kk_currency);
+          isLogin = Boolean(comic.is_login);
+          rawImages = comic.comic_images || comic.images || [];
+        }
+      } catch (parseErr) {
+        console.error('api.kkmh.com parse error:', parseErr);
       }
-    } catch (parseErr) {
-      console.error('api.kkmh.com parse error:', parseErr);
     }
 
     // 2. If locked or <= 1 image, also fallback to Web Viewer page (Nuxt SSR)
@@ -3104,17 +3118,23 @@ function testKuaikanLatestChapter(comicId, overrideCookie) {
       return normalizeKuaikanImageUrl(raw);
     });
 
+    const allNormalizedImages = rawImages.map(function(img) {
+      const raw = typeof img === 'string' ? img : (img.url1280 || img.url);
+      return normalizeKuaikanImageUrl(raw);
+    });
+
     return {
       success: true,
       comicId: targetComicId,
-      title: title || '第366话',
-      topicTitle: topicTitle || '我！天命大反派',
+      title: title || (session && session.test && session.test.title) || '第366话',
+      topicTitle: topicTitle || (session && session.test && session.test.topicTitle) || '我！天命大反派',
       imagesCount: imagesCount,
       isPay: isPay,
       isLocked: isLocked,
       isVipUnlocked: !isLocked,
       isLogin: isLogin,
-      sampleImages: sampleImages
+      sampleImages: sampleImages,
+      allImages: allNormalizedImages
     };
   } catch (e) {
     console.error('testKuaikanLatestChapter error:', e);
@@ -3123,13 +3143,154 @@ function testKuaikanLatestChapter(comicId, overrideCookie) {
 }
 
 /**
+ * Root Folder ID ใน Google Drive สำหรับเก็บมังงะแปล: แปลจนเมื่อย
+ * https://drive.google.com/drive/folders/1hA_5XjT1gLnzrAOFpT-COVfIbuSfVG6_
+ */
+const KUAIKAN_DRIVE_ROOT_FOLDER_ID = '1hA_5XjT1gLnzrAOFpT-COVfIbuSfVG6_';
+
+/**
+ * ฟังก์ชันสำหรับให้สิทธิ์ (Authorize) Google Drive ใน Apps Script Editor ครั้งแรก
+ * ให้เปิด Apps Script Editor -> เลือกฟังก์ชัน AUTHORIZE_DRIVE -> กด "เรียกใช้" (Run) -> กดยอมรับสิทธิ์
+ */
+function AUTHORIZE_DRIVE() {
+  const root = DriveApp.getRootFolder();
+  Logger.log('Google Drive Root Folder: ' + root.getName());
+  try {
+    const targetFolder = DriveApp.getFolderById(KUAIKAN_DRIVE_ROOT_FOLDER_ID);
+    Logger.log('เข้าถึงโฟลเดอร์ แปลจนเมื่อย สำเร็จ: ' + targetFolder.getName() + ' (' + targetFolder.getUrl() + ')');
+    return 'Authorized successfully! Target folder: ' + targetFolder.getName();
+  } catch (e) {
+    Logger.log('Authorized Root OK, but could not get target folder directly: ' + e);
+    return 'Authorized Root OK: ' + root.getName();
+  }
+}
+
+/**
+ * ดึงหรือสร้างโครงสร้างโฟลเดอร์ใน Google Drive:
+ * แปลจนเมื่อย (1hA_5XjT1gLnzrAOFpT-COVfIbuSfVG6_) / {ชื่อเรื่อง} / {เลขตอน}
+ */
+function getOrCreateChapterFolder(mangaName, chapterName) {
+  let rootFolder;
+  try {
+    rootFolder = DriveApp.getFolderById(KUAIKAN_DRIVE_ROOT_FOLDER_ID);
+  } catch (e) {
+    console.warn('Cannot get folder by ID ' + KUAIKAN_DRIVE_ROOT_FOLDER_ID + ', searching by name:', e);
+    const search = DriveApp.getFoldersByName('แปลจนเมื่อย');
+    if (search.hasNext()) {
+      rootFolder = search.next();
+    } else {
+      rootFolder = DriveApp.getRootFolder();
+    }
+  }
+
+  // 1. ซับโฟลเดอร์ชื่อเรื่อง (เช่น 我！天命大反派)
+  const cleanMangaName = (mangaName || '我！天命大反派').trim();
+  let mangaFolder;
+  const mangaFolders = rootFolder.getFoldersByName(cleanMangaName);
+  if (mangaFolders.hasNext()) {
+    mangaFolder = mangaFolders.next();
+  } else {
+    mangaFolder = rootFolder.createFolder(cleanMangaName);
+  }
+
+  // 2. ซับโฟลเดอร์เลขตอน (เช่น 第366话)
+  let cleanChapterName = (chapterName || '第366话').trim();
+  if (!cleanChapterName.startsWith('第') && cleanChapterName.match(/^\d+$/)) {
+    cleanChapterName = '第' + cleanChapterName + '话';
+  }
+  let chapterFolder;
+  const chapterFolders = mangaFolder.getFoldersByName(cleanChapterName);
+  if (chapterFolders.hasNext()) {
+    chapterFolder = chapterFolders.next();
+  } else {
+    chapterFolder = mangaFolder.createFolder(cleanChapterName);
+  }
+
+  return chapterFolder;
+}
+
+/**
+ * บันทึกไฟล์ภาพตอนที่เย็บแล้ว (20 หน้า/ไฟล์) ลง Google Drive
+ * โครงสร้าง: แปลจนเมื่อย / {ชื่อเรื่อง} / {เลขตอน} / Part_01.webp
+ */
+function uploadChapterStitchedPart(payload) {
+  try {
+    if (!payload || !payload.base64Data) {
+      return { error: 'ไม่มีข้อมูล base64Data' };
+    }
+
+    const mangaName = payload.mangaName || '我！天命大反派';
+    const chapter = payload.chapter || '第366话';
+    const partIndex = payload.partIndex || 1;
+    const totalParts = payload.totalParts || 1;
+    const fileName = payload.fileName || ('Part_' + String(partIndex).padStart(2, '0') + '.webp');
+    const mimeType = payload.mimeType || 'image/webp';
+
+    // 1. Get Destination Folder (แปลจนเมื่อย / {mangaName} / {chapter})
+    const targetFolder = getOrCreateChapterFolder(mangaName, chapter);
+    const folderUrl = targetFolder.getUrl();
+
+    // 2. Decode base64
+    let rawBase64 = payload.base64Data;
+    if (rawBase64.indexOf('base64,') !== -1) {
+      rawBase64 = rawBase64.split('base64,')[1];
+    }
+    const decodedBytes = Utilities.base64Decode(rawBase64);
+    const blob = Utilities.newBlob(decodedBytes, mimeType, fileName);
+
+    // 3. Remove existing file with same name if any
+    const existing = targetFolder.getFilesByName(fileName);
+    while (existing.hasNext()) {
+      try {
+        existing.next().setTrashed(true);
+      } catch (trashErr) {}
+    }
+
+    // 4. Save file
+    const createdFile = targetFolder.createFile(blob);
+    const fileUrl = createdFile.getUrl();
+
+    // 5. If last part, auto add/update WorkQueue
+    let queueRes = null;
+    if (payload.isLastPart && payload.mangaId) {
+      try {
+        queueRes = addQueue({
+          mangaid: payload.mangaId,
+          chapter: chapter.replace(/[^\d.]/g, '') || '366',
+          uploadstatus: 'Done',
+          worklink: folderUrl,
+          note: 'KuaiKan VIP Stitched (20 หน้า/ไฟล์) ลง แปลจนเมื่อย'
+        });
+      } catch (qe) {
+        console.warn('Auto addQueue error:', qe);
+      }
+    }
+
+    return {
+      success: true,
+      partIndex: partIndex,
+      totalParts: totalParts,
+      fileName: fileName,
+      fileUrl: fileUrl,
+      folderUrl: folderUrl,
+      folderName: targetFolder.getName(),
+      queueAdded: Boolean(queueRes)
+    };
+  } catch (err) {
+    console.error('uploadChapterStitchedPart error:', err);
+    return { error: err.toString() };
+  }
+}
+
+/**
  * ดาวน์โหลดตอนจาก KuaiKan ลง Google Drive และเพิ่มเข้าคิวงาน
+ * โครงสร้าง: แปลจนเมื่อย (1hA_5XjT1gLnzrAOFpT-COVfIbuSfVG6_) / {ชื่อเรื่อง} / {เลขตอน} / {001.webp...}
  */
 function downloadKuaikanChapterToDrive(payload) {
   try {
     const comicId = (payload && payload.comicId) || 855368;
     const mangaId = (payload && payload.mangaId) || '';
-    const chapter = (payload && payload.chapter) || '';
+    const chapter = (payload && payload.chapter) || '第366话';
     const mangaName = (payload && payload.mangaName) || '我！天命大反派';
 
     const session = getKuaikanSessionData();
@@ -3146,17 +3307,9 @@ function downloadKuaikanChapterToDrive(payload) {
       rawImages = session.test.allImages;
     }
 
-    // 1. Google Drive Folder
-    let rootFolder;
-    const rootFolders = DriveApp.getFoldersByName('Manga_Raws');
-    if (rootFolders.hasNext()) {
-      rootFolder = rootFolders.next();
-    } else {
-      rootFolder = DriveApp.createFolder('Manga_Raws');
-    }
-
-    const folderName = (mangaName || 'Manga') + '_ตอนที่_' + (chapter || (testRes ? testRes.title : '366'));
-    const targetFolder = rootFolder.createFolder(folderName);
+    // 1. Google Drive Folder: แปลจนเมื่อย / {mangaName} / {chapter}
+    const cleanChapter = chapter.startsWith('第') ? chapter : ('第' + chapter + '话');
+    const targetFolder = getOrCreateChapterFolder(mangaName, cleanChapter);
     const folderUrl = targetFolder.getUrl();
 
     // 2. Fetch all raw image URLs if not already available
@@ -3218,33 +3371,25 @@ function downloadKuaikanChapterToDrive(payload) {
     if (mangaId) {
       queueRes = addQueue({
         mangaid: mangaId,
-        chapter: chapter || '366',
+        chapter: chapter.replace(/[^\d.]/g, '') || '366',
         uploadstatus: 'Done',
         worklink: folderUrl,
-        note: 'Auto KuaiKan VIP DL (ตอน: ' + testRes.title + ')'
+        note: 'Auto KuaiKan VIP DL (ตอน: ' + (testRes ? testRes.title : chapter) + ') ลง แปลจนเมื่อย'
       });
     }
 
     return {
       success: true,
       comicId: comicId,
-      title: testRes.title,
+      title: testRes ? testRes.title : chapter,
       totalImages: rawImages.length,
       downloadedCount: downloadedCount,
       folderUrl: folderUrl,
+      folderName: targetFolder.getName(),
       queueAdded: Boolean(queueRes)
     };
   } catch (err) {
     console.error('downloadKuaikanChapterToDrive error:', err);
     return { error: err.toString() };
   }
-}
-
-/**
- * ฟังก์ชันสำหรับให้สิทธิ์ (Authorize) Google Drive ใน Apps Script Editor ครั้งแรก
- */
-function authDrive() {
-  const root = DriveApp.getRootFolder();
-  Logger.log('Google Drive ได้รับสิทธิ์เรียบร้อยแล้ว: ' + root.getName());
-  return 'Authorized: ' + root.getName();
 }

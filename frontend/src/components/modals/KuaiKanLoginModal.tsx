@@ -25,6 +25,9 @@ import {
   Copy,
   Bookmark,
   BookOpen,
+  Scissors,
+  Layers,
+  AlertTriangle,
 } from "lucide-react"
 
 interface KuaiKanLoginModalProps {
@@ -37,15 +40,42 @@ const GAS_EXEC_URL =
   "https://script.google.com/macros/s/AKfycbzG1H1eBoTsF7Omfso8v23N6HidWXU4kS-yyf0xDunb2BoZgPiUYPIOO2vMLSvYWwHsnw/exec"
 
 /**
+ * Root Folder ID ใน Google Drive: แปลจนเมื่อย
+ */
+const DRIVE_ROOT_FOLDER_ID = "1hA_5XjT1gLnzrAOFpT-COVfIbuSfVG6_"
+
+/**
  * แปลงลิงก์ CDN ของ KuaiKan ให้เป็น f2.kkmh.com Full HD เพื่อหลีกเลี่ยง 403 Forbidden และแสดงผลได้ 100%
  */
 function normalizeKuaikanImageUrl(url: string): string {
   if (!url) return ""
   let u = String(url).trim()
   u = u.replace(/https?:\/\/tn\d+(?:-f\d+)?\.kkmh\.com/g, "https://f2.kkmh.com")
-  u = u.replace(/-t\.w\d+\.jpg.*$/i, "")
+  u = u.replace(/-t\.w\d+.*$/i, "")
   u = u.replace(/-w\d+.*$/i, "")
   return u
+}
+
+/**
+ * Helper โหลดรูปเข้า HTMLImageElement สำหรับนำไปวาดบน Canvas
+ */
+function loadImageElement(url: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.crossOrigin = "anonymous"
+    img.referrerPolicy = "no-referrer"
+    img.onload = () => resolve(img)
+    img.onerror = () => {
+      // Retry once
+      const retry = new Image()
+      retry.crossOrigin = "anonymous"
+      retry.referrerPolicy = "no-referrer"
+      retry.onload = () => resolve(retry)
+      retry.onerror = () => reject(new Error(`โหลดภาพไม่สำเร็จ: ${url.substring(0, 45)}...`))
+      retry.src = url
+    }
+    img.src = url
+  })
 }
 
 export function KuaiKanLoginModal({
@@ -93,6 +123,19 @@ export function KuaiKanLoginModal({
   // Download state
   const [downloading, setDownloading] = React.useState(false)
   const [downloadResult, setDownloadResult] = React.useState<any | null>(null)
+
+  // Stitch & Upload state (เย็บ 20 หน้า/ไฟล์ ลง Google Drive แปลจนเมื่อย)
+  const [stitching, setStitching] = React.useState(false)
+  const [stitchProgress, setStitchProgress] = React.useState<{
+    currentPart: number
+    totalParts: number
+    pageRange: string
+    percent: number
+    statusText: string
+    folderUrl?: string
+    error?: string
+  } | null>(null)
+  const [driveAuthError, setDriveAuthError] = React.useState<string | null>(null)
 
   // Bookmarklet JavaScript Code (รองรับดูดภาพ HD จากหน้าตัวอ่านอัตโนมัติ)
   const bookmarkletCode = React.useMemo(() => {
@@ -362,6 +405,7 @@ export function KuaiKanLoginModal({
   const handleDownloadChapter = async () => {
     setDownloading(true)
     setDownloadResult(null)
+    setDriveAuthError(null)
     try {
       const res = await callGasApi<any>("DOWNLOAD_KUAIKAN_CHAPTER", {
         comicId: 855368,
@@ -373,12 +417,193 @@ export function KuaiKanLoginModal({
       if (res && res.success) {
         toast.success(`ดาวน์โหลดเรียบร้อย ${res.downloadedCount} ภาพ และนำเข้าคิวงานแล้ว!`)
       } else {
+        if (res?.error && (res.error.includes("DriveApp") || res.error.includes("คุณไม่ได้รับอนุญาต") || res.error.includes("permission"))) {
+          setDriveAuthError(res.error)
+        }
         toast.error(res?.error || "ดาวน์โหลดไม่สำเร็จ")
       }
     } catch (err: any) {
+      if (err.message && (err.message.includes("DriveApp") || err.message.includes("คุณไม่ได้รับอนุญาต") || err.message.includes("permission"))) {
+        setDriveAuthError(err.message)
+      }
       toast.error(err.message || "เกิดข้อผิดพลาดในการดาวน์โหลด")
     } finally {
       setDownloading(false)
+    }
+  }
+
+  // เย็บภาพ 20 หน้า/ไฟล์ ความกว้างเท่ากันทั้งหมด และอัปโหลดลง Google Drive: แปลจนเมื่อย / {ชื่อเรื่อง} / {เลขตอน}
+  const handleStitchAndUpload = async () => {
+    if (!testResult) {
+      toast.error("กรุณากดทดสอบตอนก่อน")
+      return
+    }
+
+    const rawUrls: string[] = testResult.allImages || testResult.sampleImages || []
+    if (!rawUrls.length) {
+      toast.error("ไม่พบรายการภาพ กรุณากดทดสอบตอนหรือซิงค์ Session อีกครั้ง")
+      return
+    }
+
+    const allUrls = rawUrls.map(normalizeKuaikanImageUrl).filter(Boolean)
+    const totalPages = allUrls.length
+    const PAGES_PER_PART = 20
+    const totalParts = Math.ceil(totalPages / PAGES_PER_PART)
+
+    setStitching(true)
+    setDriveAuthError(null)
+    setStitchProgress({
+      currentPart: 0,
+      totalParts,
+      pageRange: `เริ่มต้นคำนวณ (ทั้งหมด ${totalPages} หน้า)`,
+      percent: 5,
+      statusText: "กำลังวิเคราะห์ความกว้างมาตรฐานจากหน้ากลาง...",
+    })
+
+    try {
+      // 1. วัดขนาดความกว้างมาตรฐานจากหน้ากลางๆ (เช่น หน้า 30 จาก 150 หรือหน้ากึ่งกลาง)
+      const sampleIdx = totalPages >= 30 ? 29 : Math.floor(totalPages / 2)
+      let standardWidth = 1280
+
+      try {
+        const sampleImg = await loadImageElement(allUrls[sampleIdx])
+        if (sampleImg.naturalWidth && sampleImg.naturalWidth > 100) {
+          standardWidth = sampleImg.naturalWidth
+        }
+      } catch (err) {
+        console.warn("Could not load sample middle image, trying first image:", err)
+        try {
+          const firstImg = await loadImageElement(allUrls[0])
+          if (firstImg.naturalWidth && firstImg.naturalWidth > 100) {
+            standardWidth = firstImg.naturalWidth
+          }
+        } catch (e2) {}
+      }
+
+      toast.info(`📏 ความกว้างมาตรฐานสำหรับเย็บภาพ: ${standardWidth}px (${totalParts} ส่วน)`)
+
+      let lastFolderUrl = ""
+
+      // 2. ลูปเย็บทีละ 20 หน้า
+      for (let partIdx = 0; partIdx < totalParts; partIdx++) {
+        const startIdx = partIdx * PAGES_PER_PART
+        const endIdx = Math.min((partIdx + 1) * PAGES_PER_PART, totalPages)
+        const partNum = partIdx + 1
+        const partRange = `หน้า ${startIdx + 1} - ${endIdx}`
+        const fileName = `Part_${String(partNum).padStart(2, "0")}.webp`
+
+        setStitchProgress({
+          currentPart: partNum,
+          totalParts,
+          pageRange: partRange,
+          percent: Math.round((partIdx / totalParts) * 100),
+          statusText: `กำลังโหลดและเย็บ ${partRange}...`,
+        })
+
+        // 2.1 โหลดภาพใน Part นี้
+        const partUrls = allUrls.slice(startIdx, endIdx)
+        const loadedImages = await Promise.all(
+          partUrls.map((u) => loadImageElement(u))
+        )
+
+        // 2.2 ปรับสเกลภาพให้ความกว้างเท่ากับ standardWidth เสมอ (ขยายหน้าปกหรือหน้าที่ความกว้างต่างกัน)
+        let totalHeight = 0
+        const scaledItems = loadedImages.map((img) => {
+          const scale = standardWidth / img.naturalWidth
+          const scaledH = Math.round(img.naturalHeight * scale)
+          totalHeight += scaledH
+          return { img, scaledH }
+        })
+
+        // 2.3 สร้าง Canvas แล้ววาดต่อกันลงมา
+        const canvas = document.createElement("canvas")
+        canvas.width = standardWidth
+        canvas.height = totalHeight
+        const ctx = canvas.getContext("2d")
+        if (!ctx) throw new Error("ไม่สามารถสร้าง 2D Canvas ได้")
+
+        ctx.imageSmoothingEnabled = true
+        ctx.imageSmoothingQuality = "high"
+
+        let currentY = 0
+        for (const item of scaledItems) {
+          ctx.drawImage(item.img, 0, currentY, standardWidth, item.scaledH)
+          currentY += item.scaledH
+        }
+
+        // 2.4 ส่งออกเป็น WebP Blob
+        const blob = await new Promise<Blob>((resolve, reject) => {
+          canvas.toBlob(
+            (b) => (b ? resolve(b) : reject(new Error("สร้าง WebP blob ไม่สำเร็จ"))),
+            "image/webp",
+            0.92
+          )
+        })
+
+        // คืนหน่วยความจำ Canvas
+        canvas.width = 0
+        canvas.height = 0
+
+        // 2.5 แปลงเป็น Base64
+        const base64Data = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onloadend = () => resolve(reader.result as string)
+          reader.onerror = reject
+          reader.readAsDataURL(blob)
+        })
+
+        // 2.6 ส่งขึ้น Google Drive
+        setStitchProgress({
+          currentPart: partNum,
+          totalParts,
+          pageRange: partRange,
+          percent: Math.round(((partIdx + 0.6) / totalParts) * 100),
+          statusText: `กำลังอัปโหลด ${fileName} ขึ้น แปลจนเมื่อย...`,
+        })
+
+        const isLast = partIdx === totalParts - 1
+        const res = await callGasApi<any>("UPLOAD_CHAPTER_STITCHED_PART", {
+          mangaName: testResult.topicTitle || "我！天命大反派",
+          chapter: testResult.title || "第366话",
+          partIndex: partNum,
+          totalParts,
+          fileName,
+          mimeType: "image/webp",
+          base64Data,
+          isLastPart: isLast,
+          mangaId: "1",
+        })
+
+        if (res && res.error) {
+          if (res.error.includes("DriveApp") || res.error.includes("คุณไม่ได้รับอนุญาต") || res.error.includes("permission")) {
+            setDriveAuthError(res.error)
+          }
+          throw new Error(res.error)
+        }
+
+        if (res && res.folderUrl) {
+          lastFolderUrl = res.folderUrl
+        }
+      }
+
+      setStitchProgress({
+        currentPart: totalParts,
+        totalParts,
+        pageRange: `ครบทั้ง ${totalPages} หน้า`,
+        percent: 100,
+        statusText: `เย็บและอัปโหลดเสร็จสิ้นครบทั้ง ${totalParts} ส่วนแล้ว!`,
+        folderUrl: lastFolderUrl || `https://drive.google.com/drive/folders/${DRIVE_ROOT_FOLDER_ID}`,
+      })
+
+      toast.success(`🎉 เย็บ 20 หน้า/ไฟล์ ครบทั้ง ${totalParts} ส่วน และบันทึกลง แปลจนเมื่อย สำเร็จ!`)
+    } catch (err: any) {
+      console.error("handleStitchAndUpload error:", err)
+      if (err.message && (err.message.includes("DriveApp") || err.message.includes("คุณไม่ได้รับอนุญาต") || err.message.includes("permission"))) {
+        setDriveAuthError(err.message)
+      }
+      toast.error(err.message || "เกิดข้อผิดพลาดในการเย็บภาพ")
+    } finally {
+      setStitching(false)
     }
   }
 
@@ -469,7 +694,7 @@ export function KuaiKanLoginModal({
         </div>
 
         {/* Modal Body Container (Strictly Controlled Height, Never Overflows) */}
-        <div className="p-5 pt-3 min-h-[220px]">
+        <div className="p-5 pt-3 min-h-[220px] max-h-[75vh] overflow-y-auto">
           {/* TAB 1: SYNC VIEW */}
           {mainTab === "sync" && (
             <div className="space-y-3">
@@ -733,35 +958,123 @@ export function KuaiKanLoginModal({
                     </div>
                   )}
 
-                  {/* Actions: Download */}
-                  {testResult.isVipUnlocked && testResult.imagesCount > 1 && (
-                    <div className="pt-2 border-t border-[#1e293b] flex items-center justify-between">
-                      <span className="text-[11px] text-emerald-400 flex items-center gap-1 font-medium">
-                        <CheckCircle2 className="h-3 w-3" /> ภาพ HD พร้อมแล้ว
+                  {/* Target Folder Path Indicator */}
+                  <div className="px-2.5 py-1.5 rounded-lg bg-[#070b14] border border-[#1e293b] text-[10px] text-slate-300 flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 truncate">
+                      <FolderOpen className="h-3.5 w-3.5 text-indigo-400 shrink-0" />
+                      <span className="text-slate-400">บันทึกลง:</span>
+                      <span className="font-mono text-emerald-300 truncate">
+                        แปลจนเมื่อย / {testResult.topicTitle || "我！天命大反派"} / {testResult.title || "第366话"}
                       </span>
-                      <Button
-                        size="sm"
-                        onClick={handleDownloadChapter}
-                        disabled={downloading}
-                        className="h-7 text-xs bg-emerald-600 hover:bg-emerald-500 text-white"
-                      >
-                        {downloading ? (
-                          <>
-                            <RefreshCw className="h-3 w-3 animate-spin mr-1" /> กำลังโหลด...
-                          </>
-                        ) : (
-                          <>
-                            <Download className="h-3 w-3 mr-1" /> โหลดลง Google Drive
-                          </>
-                        )}
-                      </Button>
+                    </div>
+                    <a
+                      href={`https://drive.google.com/drive/folders/${DRIVE_ROOT_FOLDER_ID}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-indigo-400 hover:text-indigo-300 shrink-0 text-[10px] underline ml-2"
+                    >
+                      ดูโฟลเดอร์หลัก
+                    </a>
+                  </div>
+
+                  {/* Actions: Stitch 20 pages or Download Raw */}
+                  {testResult.isVipUnlocked && testResult.imagesCount > 1 && (
+                    <div className="pt-2 border-t border-[#1e293b] space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <Button
+                          size="sm"
+                          onClick={handleStitchAndUpload}
+                          disabled={stitching || downloading}
+                          className="flex-1 h-8 text-xs bg-emerald-600 hover:bg-emerald-500 text-white font-semibold shadow-md shadow-emerald-950 flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          {stitching ? (
+                            <>
+                              <RefreshCw className="h-3.5 w-3.5 animate-spin mr-1" />
+                              กำลังเย็บ & อัปโหลด...
+                            </>
+                          ) : (
+                            <>
+                              <Scissors className="h-3.5 w-3.5 mr-1" />
+                              เย็บ 20 หน้า & เซฟลง Drive
+                            </>
+                          )}
+                        </Button>
+
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={handleDownloadChapter}
+                          disabled={stitching || downloading}
+                          className="h-8 text-xs border-[#1e293b] bg-[#141c2e] hover:bg-slate-800 text-slate-200 shrink-0"
+                          title="ดาวน์โหลดภาพดิบทั้งหมดแยกเป็นไฟล์เดี่ยวๆ"
+                        >
+                          {downloading ? (
+                            <RefreshCw className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <>
+                              <Download className="h-3 w-3 mr-1" /> Raw ({testResult.imagesCount})
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                      <div className="text-[10px] text-slate-400 text-center">
+                        ✂️ เย็บภาพต่อกันแนวตั้ง 20 หน้า/ไฟล์ (ความกว้างเท่ากัน ปรับสเกลหน้าปกให้อัตโนมัติ)
+                      </div>
                     </div>
                   )}
 
-                  {/* Download Result Link */}
+                  {/* Live Stitching Progress */}
+                  {stitching && stitchProgress && (
+                    <div className="p-3 rounded-xl border border-indigo-500/30 bg-indigo-950/30 space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-semibold text-indigo-300 flex items-center gap-1.5">
+                          <Layers className="h-3.5 w-3.5 animate-bounce" />
+                          Part {stitchProgress.currentPart} / {stitchProgress.totalParts}
+                        </span>
+                        <span className="text-[11px] font-mono text-emerald-400">
+                          {stitchProgress.percent}%
+                        </span>
+                      </div>
+                      <div className="w-full bg-[#0b101b] rounded-full h-2 overflow-hidden border border-[#1e293b]">
+                        <div
+                          className="bg-gradient-to-r from-indigo-500 to-emerald-500 h-2 rounded-full transition-all duration-300"
+                          style={{ width: `${Math.max(stitchProgress.percent, 5)}%` }}
+                        />
+                      </div>
+                      <div className="flex items-center justify-between text-[10px] text-slate-400">
+                        <span>{stitchProgress.pageRange}</span>
+                        <span className="text-slate-300">{stitchProgress.statusText}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Stitch Complete Success Link */}
+                  {!stitching && stitchProgress && stitchProgress.percent === 100 && (
+                    <div className="p-3 rounded-xl bg-emerald-950/40 border border-emerald-500/40 text-emerald-200 text-xs space-y-2">
+                      <div className="flex items-center gap-1.5 font-bold text-emerald-300">
+                        <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                        เย็บและบันทึกลง Google Drive สำเร็จครบทั้ง {stitchProgress.totalParts} ส่วน!
+                      </div>
+                      <div className="text-[11px] text-slate-300">
+                        ไฟล์ถูกบันทึกไว้ในโฟลเดอร์ <b>แปลจนเมื่อย / {testResult.topicTitle || "我！天命大反派"} / {testResult.title || "第366话"}</b>
+                      </div>
+                      {stitchProgress.folderUrl && (
+                        <a
+                          href={stitchProgress.folderUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center justify-center gap-1.5 w-full py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs shadow transition-colors"
+                        >
+                          <FolderOpen className="h-3.5 w-3.5" /> เปิดโฟลเดอร์ใน Google Drive
+                        </a>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Raw Download Result Link */}
                   {downloadResult && downloadResult.success && (
-                    <div className="p-2 rounded-lg bg-emerald-950/40 border border-emerald-500/30 text-emerald-200 text-[11px] flex items-center justify-between">
-                      <span>✓ โหลดแล้ว {downloadResult.downloadedCount} ภาพ!</span>
+                    <div className="p-2.5 rounded-lg bg-emerald-950/40 border border-emerald-500/30 text-emerald-200 text-[11px] flex items-center justify-between">
+                      <span>✓ โหลดภาพดิบแล้ว {downloadResult.downloadedCount} ภาพ!</span>
                       {downloadResult.folderUrl && (
                         <a
                           href={downloadResult.folderUrl}
@@ -772,6 +1085,27 @@ export function KuaiKanLoginModal({
                           <FolderOpen className="h-3 w-3" /> เปิดใน Drive
                         </a>
                       )}
+                    </div>
+                  )}
+
+                  {/* Drive Permission Authorization Alert */}
+                  {driveAuthError && (
+                    <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-500/40 text-amber-200 text-xs space-y-2">
+                      <div className="flex items-center gap-1.5 font-bold text-amber-300">
+                        <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0" />
+                        ต้องกดอนุญาตสิทธิ์ Google Drive ใน Apps Script 1 ครั้ง
+                      </div>
+                      <div className="text-[11px] text-slate-300 leading-relaxed">
+                        เนื่องจาก Google Apps Script เพิ่มสิทธิ์เข้าถึง Google Drive กรุณาเปิด Apps Script แล้วรันฟังก์ชัน <b>AUTHORIZE_DRIVE</b> เพื่อกดยืนยันสิทธิ์:
+                      </div>
+                      <a
+                        href="https://script.google.com/home/projects/1W-7_ngf3zkLJjCJB4Mm_CJxNyzgQAlD49kaUZQ6iNcaKnM6ntrZaICs5/edit"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center justify-center gap-1.5 w-full py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-semibold text-xs shadow transition-colors"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" /> เปิด Apps Script เพื่อกด AUTHORIZE_DRIVE
+                      </a>
                     </div>
                   )}
                 </div>
