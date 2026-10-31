@@ -951,11 +951,17 @@ export function ConnectorsView({ mangaList }: ConnectorsViewProps) {
                             className="aspect-[3/4] rounded-lg border border-[#26334d] bg-[#0b0f19] overflow-hidden relative group"
                           >
                             <img
-                              src={imgUrl}
+                              src={normalizeKuaikanImageUrl(imgUrl)}
                               alt={`Slice ${idx + 1}`}
                               className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
                               referrerPolicy="no-referrer"
                               crossOrigin="anonymous"
+                              onError={(e) => {
+                                const target = e.currentTarget
+                                if (target.src !== imgUrl) {
+                                  target.src = imgUrl
+                                }
+                              }}
                             />
                             <span className="absolute bottom-1 right-1 rounded bg-black/70 px-1 py-0.5 text-[9px] text-white">
                               #{idx + 1}

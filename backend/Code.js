@@ -2923,27 +2923,26 @@ function checkKuaikanQrStatus(payload) {
 }
 
 /**
- * ตรวจสอบและจัดโครงสร้าง URL ภาพ KuaiKan โดยอิงตาม Domain {subdomain}.kkmh.com/image/...
- * ตรวจสอบความถูกต้องของโดเมนและรักษา query parameter (sign & t) ให้ครบถ้วน
+ * ตรวจสอบและแปลง URL ภาพ KuaiKan ให้เป็น Full HD บน f2.kkmh.com
+ * โดยตรวจโครงสร้างโดเมน {subdomain}.kkmh.com/image/... และตัดพารามิเตอร์ Thumbnail ออก เพื่อป้องกัน 403 Forbidden
  */
 function normalizeKuaikanImageUrl(url) {
   if (!url) return '';
   let u = String(url).trim().replace(/&amp;/g, '&');
-  // หากเป็น relative path ให้เติม https://tn1.kkmh.com
-  if (u.startsWith('/image/')) {
-    u = 'https://tn1.kkmh.com' + u;
+  const match = u.match(/^https?:\/\/[a-zA-Z0-9-]+\.kkmh\.com\/image\/(.+)$/i);
+  if (match) {
+    let path = match[1];
+    // ตัด thumbnail modifier (-t.w1280.jpg.h หรือ -w1280... หรือ query string) ออก เพื่อให้ได้ภาพ HD ต้นฉบับจาก f2.kkmh.com
+    path = path.replace(/-t\.w\d+.*$/i, '').replace(/-w\d+.*$/i, '').split('?')[0];
+    return 'https://f2.kkmh.com/image/' + path;
   }
-  // แปลง http:// เป็น https:// เสมอ
-  if (u.startsWith('http://')) {
-    u = u.replace('http://', 'https://');
+  if (u.startsWith('/image/')) {
+    let path = u.replace(/^\/image\//, '').replace(/-t\.w\d+.*$/i, '').replace(/-w\d+.*$/i, '').split('?')[0];
+    return 'https://f2.kkmh.com/image/' + path;
   }
   return u;
 }
 
-/**
- * Regex แกะภาพจากโครงสร้าง HTML ของ KuaiKan:
- * <div class="comicDetails"><div class="imgList"><div class="img-box"><img data-src="https://tn1.kkmh.com/image/c855368/..." ...>
- */
 /**
  * Regex แกะภาพจากโครงสร้าง HTML ของ KuaiKan:
  * รองรับทั้ง DOM (<div class="img-box">) และ Nuxt SSR State (<script>window.__NUXT__</script>)
@@ -2964,6 +2963,9 @@ function extractComicImagesFromHtml(html, comicId) {
   let match;
   while ((match = targetRegex.exec(decodedHtml)) !== null) {
     const rawUrl = match[0].replace(/&amp;/g, '&');
+    // ข้ามภาพ thumbnail แนะนำ/โฆษณา (w640)
+    if (rawUrl.indexOf('w640') !== -1) continue;
+
     // ดึงคีย์ภาพที่ไม่ซ้ำ เช่น uzBt0nZ2l
     const keyMatch = rawUrl.match(/\/image\/c\d+\/\d+\/([^.]+)/i);
     const key = keyMatch ? keyMatch[1] : rawUrl;
@@ -2979,6 +2981,7 @@ function extractComicImagesFromHtml(html, comicId) {
     let m2;
     while ((m2 = genericRegex.exec(decodedHtml)) !== null) {
       const rawUrl = m2[0].replace(/&amp;/g, '&');
+      if (rawUrl.indexOf('w640') !== -1) continue;
       const keyMatch = rawUrl.match(/\/image\/c\d+\/\d+\/([^.]+)/i);
       const key = keyMatch ? keyMatch[1] : rawUrl;
       if (!seenKeys[key]) {
@@ -3046,11 +3049,11 @@ function saveKuaikanAuth(payload) {
   // ทดสอบความถูกต้องและสิทธิ์ VIP (หากส่งรายชื่อภาพจากเบราว์เซอร์มาด้วย ใช้รายชื่อภาพนั้นได้เลย)
   let testRes = null;
   if (payload.images && Array.isArray(payload.images) && payload.images.length > 0) {
-    // กรองเข้มงวด: ภาพตอนแท้จริงต้องมี /image/c<comicId>/ เท่านั้น (ตัดภาพโฆษณา/ภาพแนะนำออก 100%)
+    // กรองเข้มงวด: ภาพตอนแท้จริงต้องมี /image/c<comicId>/ และต้องไม่เป็นภาพโฆษณา/ภาพแนะนำ (w640)
     const comicImgRegex = /\/image\/c\d+\//i;
     const cleanImgs = payload.images
       .filter(function(u) {
-        return typeof u === 'string' && (comicImgRegex.test(u) || u.indexOf('/c' + (payload.comicId || 855368)) !== -1);
+        return typeof u === 'string' && (comicImgRegex.test(u) || u.indexOf('/c' + (payload.comicId || 855368)) !== -1) && u.indexOf('w640') === -1;
       })
       .map(normalizeKuaikanImageUrl)
       .filter(Boolean);
@@ -3184,10 +3187,10 @@ function testKuaikanLatestChapter(comicId, overrideCookie) {
       if (!topicTitle) topicTitle = session.test.topicTitle || '';
     }
 
-    // Filter rawImages to ensure only real chapter comic images are kept (contains /image/c)
+    // Filter rawImages to ensure only real chapter comic images are kept (contains /image/c, no w640 ads)
     rawImages = rawImages.filter(function(img) {
       const u = typeof img === 'string' ? img : (img.url1280 || img.url);
-      return u && (u.indexOf('/image/c') !== -1 || u.indexOf('/c' + targetComicId) !== -1);
+      return u && (u.indexOf('/image/c') !== -1 || u.indexOf('/c' + targetComicId) !== -1) && u.indexOf('w640') === -1;
     });
 
     const imagesCount = rawImages.length;

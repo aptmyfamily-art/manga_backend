@@ -45,19 +45,21 @@ const GAS_EXEC_URL =
 const DRIVE_ROOT_FOLDER_ID = "1hA_5XjT1gLnzrAOFpT-COVfIbuSfVG6_"
 
 /**
- * ตรวจสอบและจัดโครงสร้าง URL ภาพ KuaiKan โดยอิงตาม Domain {subdomain}.kkmh.com/image/...
- * ตรวจสอบความถูกต้องของโดเมนและรักษา query parameter (sign & t) ให้ครบถ้วน
+ * ตรวจสอบและแปลง URL ภาพ KuaiKan ให้เป็น Full HD บน f2.kkmh.com
+ * โดยตรวจโครงสร้างโดเมน {subdomain}.kkmh.com/image/... และตัดพารามิเตอร์ Thumbnail ออก เพื่อป้องกัน 403 Forbidden
  */
 export function normalizeKuaikanImageUrl(url: string): string {
   if (!url) return ""
   let u = String(url).trim().replace(/&amp;/g, "&")
-  // หากเป็น relative path ให้เติม https://tn1.kkmh.com
-  if (u.startsWith("/image/")) {
-    u = "https://tn1.kkmh.com" + u
+  const match = u.match(/^https?:\/\/[a-zA-Z0-9-]+\.kkmh\.com\/image\/(.+)$/i)
+  if (match) {
+    let path = match[1]
+    path = path.replace(/-t\.w\d+.*$/i, "").replace(/-w\d+.*$/i, "").split("?")[0]
+    return `https://f2.kkmh.com/image/${path}`
   }
-  // แปลง http:// เป็น https:// เสมอ
-  if (u.startsWith("http://")) {
-    u = u.replace("http://", "https://")
+  if (u.startsWith("/image/")) {
+    let path = u.replace(/^\/image\//, "").replace(/-t\.w\d+.*$/i, "").replace(/-w\d+.*$/i, "").split("?")[0]
+    return `https://f2.kkmh.com/image/${path}`
   }
   return u
 }
@@ -70,35 +72,28 @@ export async function loadImageElement(
   url: string,
   onRetryNotice?: (text: string) => void
 ): Promise<HTMLImageElement> {
-  const normalized = normalizeKuaikanImageUrl(url)
+  const f2Url = normalizeKuaikanImageUrl(url)
+  const candidateUrls: string[] = [f2Url]
 
-  // วิเคราะห์โครงสร้างโดเมน {subdomain}.kkmh.com/image/{path}
-  const kkmhMatch = normalized.match(/^https?:\/\/([a-zA-Z0-9-]+)\.kkmh\.com\/image\/(.+)$/i)
-
-  // สร้างรายการ URL สำรองโดยอิงจากโครงสร้างโดเมน (ไม่เจาะจงชื่อไฟล์ใดๆ)
-  const candidateUrls: string[] = [normalized]
-
+  // สำรองโดเมนเพิ่มเติม
+  const kkmhMatch = url.match(/^https?:\/\/([a-zA-Z0-9-]+)\.kkmh\.com\/image\/(.+)$/i)
   if (kkmhMatch) {
     const imagePath = kkmhMatch[2]
-    // สำรอง 1: Clean HD WebP บน f2.kkmh.com (ตัด -t.w1280 และ query ออก)
     const cleanPath = imagePath
       .replace(/-t\.w\d+.*$/i, "")
       .replace(/-w\d+.*$/i, "")
       .split("?")[0]
-    const f2CleanUrl = `https://f2.kkmh.com/image/${cleanPath}`
-    if (!candidateUrls.includes(f2CleanUrl)) candidateUrls.push(f2CleanUrl)
 
-    // สำรอง 2: tn1.kkmh.com พร้อม path เดิม
-    const tn1Url = `https://tn1.kkmh.com/image/${imagePath}`
+    // สำรอง: original URL
+    if (url !== f2Url && !candidateUrls.includes(url)) candidateUrls.push(url)
+
+    // สำรอง: tn1.kkmh.com
+    const tn1Url = `https://tn1.kkmh.com/image/${cleanPath}`
     if (!candidateUrls.includes(tn1Url)) candidateUrls.push(tn1Url)
 
-    // สำรอง 3: tn2.kkmh.com พร้อม path เดิม
-    const tn2Url = `https://tn2.kkmh.com/image/${imagePath}`
+    // สำรอง: tn2.kkmh.com
+    const tn2Url = `https://tn2.kkmh.com/image/${cleanPath}`
     if (!candidateUrls.includes(tn2Url)) candidateUrls.push(tn2Url)
-
-    // สำรอง 4: f2.kkmh.com พร้อม path เดิม
-    const f2OriginalUrl = `https://f2.kkmh.com/image/${imagePath}`
-    if (!candidateUrls.includes(f2OriginalUrl)) candidateUrls.push(f2OriginalUrl)
   }
 
   let attempt = 1
