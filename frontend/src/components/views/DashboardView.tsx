@@ -71,7 +71,7 @@ export function DashboardView({
       }
     })
 
-    // งานที่อยู่ในขั้นตอนสถานะรอโพสต์: ตรวจ/ลงเว็บเสร็จแล้ว รอโพสต์
+    // งานที่อยู่ในขั้นตอนสถานะรอpublished: ตรวจ/ลงเว็บเสร็จแล้ว รอ published
     let waitPostCount = 0
     queueList.forEach((q) => {
       if (isStepDone(q.poststatus)) return
@@ -257,11 +257,11 @@ export function DashboardView({
         <Card
           onClick={() => onSwitchToQueue()}
           className="p-5 flex items-center justify-between cursor-pointer hover:border-sky-500/50 transition-colors"
-          title="คลิกเพื่อไปที่หน้ารายการคิวงาน (งานสถานะรอโพสต์)"
+          title="คลิกเพื่อไปที่หน้ารายการคิวงาน (งานสถานะรอpublished)"
         >
           <div>
             <p className="text-xs font-medium text-slate-400">
-              งานสถานะรอโพสต์
+              งานสถานะรอpublished
             </p>
             {isLoading ? (
               <Skeleton className="h-8 w-16 mt-1" />
@@ -271,7 +271,7 @@ export function DashboardView({
               </p>
             )}
             <p className="text-[11px] text-slate-500 mt-0.5">
-              ตรวจ/ลงเว็บเสร็จแล้ว รอโพสต์
+              ตรวจ/ลงเว็บเสร็จแล้ว รอ published
             </p>
           </div>
           <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-sky-500/20 text-sky-400">
