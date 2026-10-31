@@ -53,6 +53,7 @@ import {
   ChevronDown,
   ChevronUp,
   RefreshCw,
+  UserX,
 } from "lucide-react"
 
 ChartJS.register(
@@ -92,6 +93,7 @@ const DEFAULT_RATES: ExpenseRates = {
 }
 
 const STORAGE_RATES_KEY = "mangahub_expense_rates_v1"
+const STORAGE_EXCLUDE_KEY = "mangahub_exclude_apt_phum_v1"
 
 function loadSavedRates(): ExpenseRates {
   try {
@@ -107,6 +109,16 @@ function loadSavedRates(): ExpenseRates {
 
 function saveRates(rates: ExpenseRates) {
   localStorage.setItem(STORAGE_RATES_KEY, JSON.stringify(rates))
+}
+
+function loadSavedExcludeAptPhum(): boolean {
+  try {
+    const raw = localStorage.getItem(STORAGE_EXCLUDE_KEY)
+    if (raw !== null) {
+      return raw === "true"
+    }
+  } catch (e) {}
+  return true // Default: exclude Apt & ภูมิ as requested
 }
 
 interface ExpensesViewProps {
@@ -147,6 +159,33 @@ export function ExpensesView({
   const [rates, setRates] = React.useState<ExpenseRates>(loadSavedRates)
   const [rateSettingsOpen, setRateSettingsOpen] = React.useState(false)
   const [tempRates, setTempRates] = React.useState<ExpenseRates>(rates)
+
+  // Toggle button to exclude Apt and ภูมิ from calculation
+  const [excludeAptPhum, setExcludeAptPhum] = React.useState<boolean>(
+    loadSavedExcludeAptPhum
+  )
+
+  const handleToggleExcludeAptPhum = () => {
+    setExcludeAptPhum((prev) => {
+      const next = !prev
+      localStorage.setItem(STORAGE_EXCLUDE_KEY, String(next))
+      if (next) {
+        toast.info("ถอดชื่อ Apt และ ภูมิ ออกจากการคำนวณแล้ว")
+      } else {
+        toast.info("รวมชื่อ Apt และ ภูมิ ในการคำนวณตามปกติ")
+      }
+      return next
+    })
+  }
+
+  const isNameExcluded = React.useCallback(
+    (rawName: string): boolean => {
+      if (!excludeAptPhum) return false
+      const clean = (rawName || "").trim().toLowerCase()
+      return clean === "apt" || clean === "ภูมิ"
+    },
+    [excludeAptPhum]
+  )
 
   const [activeTab, setActiveTab] = React.useState<"members" | "chapters">(
     "members"
@@ -269,7 +308,13 @@ export function ExpensesView({
         selectedMonth,
         selectedYear
       )
-      if (isStepDone(q.uploadstatus) && q.uploadername && isUploadInPeriod) {
+      const uploaderExcluded = isNameExcluded(q.uploadername)
+      if (
+        isStepDone(q.uploadstatus) &&
+        q.uploadername &&
+        isUploadInPeriod &&
+        !uploaderExcluded
+      ) {
         const member = getOrCreateMember(q.uploadername)
         rowUploadCost = count * rates.uploadRate
         member.uploadChapters += count
@@ -284,12 +329,14 @@ export function ExpensesView({
         selectedMonth,
         selectedYear
       )
+      const extractorExcluded = isNameExcluded(q.extractorname)
       if (
         isStepDone(q.extractstatus) &&
         q.extractorname &&
         q.extractstatus !== "Skipped" &&
         q.extractstatus !== "ข้าม" &&
-        isExtractInPeriod
+        isExtractInPeriod &&
+        !extractorExcluded
       ) {
         const member = getOrCreateMember(q.extractorname)
         rowExtractCost = count * rates.extractRate
@@ -305,12 +352,14 @@ export function ExpensesView({
         selectedMonth,
         selectedYear
       )
+      const translatorExcluded = isNameExcluded(q.translatorname)
       if (
         isStepDone(q.translatestatus) &&
         q.translatorname &&
         q.translatestatus !== "Skipped" &&
         q.translatestatus !== "ข้าม" &&
-        isTranslateInPeriod
+        isTranslateInPeriod &&
+        !translatorExcluded
       ) {
         const member = getOrCreateMember(q.translatorname)
         const isSpecial = member.name
@@ -333,12 +382,14 @@ export function ExpensesView({
         selectedMonth,
         selectedYear
       )
+      const typesetterExcluded = isNameExcluded(q.typesettername)
       if (
         isStepDone(q.typesetstatus) &&
         q.typesettername &&
         q.typesetstatus !== "Skipped" &&
         q.typesetstatus !== "ข้าม" &&
-        isTypesetInPeriod
+        isTypesetInPeriod &&
+        !typesetterExcluded
       ) {
         const member = getOrCreateMember(q.typesettername)
         const isSpecial = member.name
@@ -369,13 +420,33 @@ export function ExpensesView({
           mangaName,
           chapter: q.chapter,
           chapterCount: count,
-          uploader: rowUploadCost > 0 ? q.uploadername || "-" : "-",
+          uploader:
+            rowUploadCost > 0
+              ? q.uploadername || "-"
+              : uploaderExcluded && isStepDone(q.uploadstatus)
+              ? `${q.uploadername} (ยกเว้น)`
+              : "-",
           uploadCost: rowUploadCost,
-          extractor: rowExtractCost > 0 ? q.extractorname || "-" : "-",
+          extractor:
+            rowExtractCost > 0
+              ? q.extractorname || "-"
+              : extractorExcluded && isStepDone(q.extractstatus)
+              ? `${q.extractorname} (ยกเว้น)`
+              : "-",
           extractCost: rowExtractCost,
-          translator: rowTranslateCost > 0 ? q.translatorname || "-" : "-",
+          translator:
+            rowTranslateCost > 0
+              ? q.translatorname || "-"
+              : translatorExcluded && isStepDone(q.translatestatus)
+              ? `${q.translatorname} (ยกเว้น)`
+              : "-",
           translateCost: rowTranslateCost,
-          typesetter: rowTypesetCost > 0 ? q.typesettername || "-" : "-",
+          typesetter:
+            rowTypesetCost > 0
+              ? q.typesettername || "-"
+              : typesetterExcluded && isStepDone(q.typesetstatus)
+              ? `${q.typesettername} (ยกเว้น)`
+              : "-",
           typesetCost: rowTypesetCost,
           totalCost: rowTotal,
         })
@@ -428,6 +499,7 @@ export function ExpensesView({
     mangaList,
     rates,
     isDateInPeriod,
+    isNameExcluded,
   ])
 
   // Doughnut Chart Data (by step)
@@ -660,6 +732,27 @@ export function ExpensesView({
               />
             </Button>
 
+            {/* Toggle Exclude Apt & Phum */}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleToggleExcludeAptPhum}
+              className={`h-9 font-medium text-xs transition-all cursor-pointer ${
+                excludeAptPhum
+                  ? "bg-rose-500/20 text-rose-300 border-rose-500/40 hover:bg-rose-500/30"
+                  : "bg-[#0b1120] text-slate-400 border-[#26334d] hover:bg-slate-800 hover:text-white"
+              }`}
+              title="กดเพื่อเปิด/ปิด การถอดชื่อ Apt และ ภูมิ ออกจากการคำนวณค่าแรง"
+            >
+              <UserX
+                className={`h-4 w-4 mr-1.5 ${
+                  excludeAptPhum ? "text-rose-400" : "text-slate-400"
+                }`}
+              />
+              {excludeAptPhum ? "🚫 ถอดชื่อ Apt & ภูมิ แล้ว" : "👥 รวมชื่อ Apt & ภูมิ"}
+            </Button>
+
             {loadingQueue && (
               <span className="text-xs text-amber-400 animate-pulse flex items-center gap-1">
                 <span className="h-2 w-2 rounded-full bg-amber-400 animate-ping" />
@@ -671,6 +764,11 @@ export function ExpensesView({
           {/* Active Rates Rules Pill */}
           <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400">
             <span className="text-slate-500">เกณฑ์คำนวณ:</span>
+            {excludeAptPhum && (
+              <Badge variant="outline" className="bg-rose-500/15 text-rose-300 border-rose-500/40 font-medium">
+                🚫 ยกเว้น: Apt & ภูมิ
+              </Badge>
+            )}
             <Badge variant="outline" className="bg-[#151d2f] text-slate-300 border-[#26334d]">
               อัป Raw: {rates.uploadRate}บ.
             </Badge>
