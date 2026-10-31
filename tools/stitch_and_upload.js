@@ -116,8 +116,8 @@ async function main() {
       buffers.push(Buffer.from(ab));
     }
 
-    // Determine target width from page 30 or middle
-    const sampleIdx = allImages.length >= 30 ? 29 : Math.floor(allImages.length / 2);
+    // Determine target width from slice #15 (index 14) of the chapter dynamically (no locked width)
+    const sampleIdx = allImages.length >= 15 ? 14 : Math.floor(allImages.length / 2);
     const sampleResp = await fetch(allImages[sampleIdx]);
     const sampleBuf = Buffer.from(await sampleResp.arrayBuffer());
     const sampleMeta = await sharp(sampleBuf).metadata();

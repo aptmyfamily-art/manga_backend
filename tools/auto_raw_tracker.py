@@ -133,14 +133,15 @@ def process_single_chapter(task):
         print("❌ ไม่พบรูปภาพในตอนนี้ ข้าม")
         return False
 
-    # 2. วัดขนาดความกว้างมาตรฐานจากชิ้นกึ่งกลาง
-    sample_idx = 29 if total_images >= 30 else total_images // 2
+    # 2. วัดขนาดความกว้างมาตรฐานจากหน้าย่อยที่ 15 (Index 14) ของเรื่อง/ตอนนั้นๆ เสมอ (ไม่ล็อค 1280px)
+    sample_idx = 14 if total_images >= 15 else total_images // 2
+    print(f"2. วัดขนาดความกว้างมาตรฐานจากหน้าย่อย #{sample_idx + 1}...")
     sample_bytes = download_image(urls[sample_idx])
     if not sample_bytes:
         sample_bytes = download_image(urls[0])
     sample_img = Image.open(io.BytesIO(sample_bytes))
     standard_width = sample_img.width
-    print(f"✓ ความกว้างมาตรฐานคือ {standard_width}px")
+    print(f"✓ ความกว้างมาตรฐานคือ {standard_width}px (จากหน้าย่อย #{sample_idx + 1})")
 
     # 3. รวมชิ้นภาพแบ่งออกเป็น 20 หน้า (001-020)
     total_parts = min(TARGET_TOTAL_PAGES, total_images)

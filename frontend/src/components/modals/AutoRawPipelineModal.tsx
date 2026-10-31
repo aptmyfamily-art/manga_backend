@@ -192,7 +192,24 @@ export function AutoRawPipelineModal({
 
     const totalImages = allUrls.length
     const totalParts = Math.min(20, totalImages)
-    const standardWidth = 1280
+
+    // วัดขนาดความกว้างมาตรฐานจากหน้าย่อยที่ 15 (Index 14) ของเรื่องและตอนนั้นๆ เสมอ (ไม่ล็อค 1280px)
+    const sampleIdx = totalImages >= 15 ? 14 : Math.floor(totalImages / 2)
+    let standardWidth = 1280
+    try {
+      const sampleImg = await loadImageElement(allUrls[sampleIdx])
+      if (sampleImg && sampleImg.naturalWidth && sampleImg.naturalWidth > 100) {
+        standardWidth = sampleImg.naturalWidth
+      }
+    } catch (e1) {
+      console.warn("Could not load slice #15, trying first slice:", e1)
+      try {
+        const firstImg = await loadImageElement(allUrls[0])
+        if (firstImg && firstImg.naturalWidth && firstImg.naturalWidth > 100) {
+          standardWidth = firstImg.naturalWidth
+        }
+      } catch (e2) {}
+    }
 
     setTasks((prev) =>
       prev.map((t, idx) =>
@@ -200,7 +217,7 @@ export function AutoRawPipelineModal({
           ? {
               ...t,
               status: "stitching",
-              statusText: `พบ ${totalImages} ชิ้นภาพ กำลังเย็บเป็น ${totalParts} หน้า...`,
+              statusText: `พบ ${totalImages} ชิ้นภาพ (ความกว้างมาตรฐานหน้าย่อยที่ 15: ${standardWidth}px) กำลังเย็บเป็น ${totalParts} หน้า...`,
               progress: 10,
             }
           : t

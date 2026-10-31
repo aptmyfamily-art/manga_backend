@@ -634,12 +634,12 @@ export function KuaiKanLoginModal({
       totalParts,
       pageRange: `เริ่มต้นคำนวณ (${stitchMode === "total20" ? `ทั้งหมด ${totalPages} ชิ้น -> แบ่งเป็น ${totalParts} ไฟล์` : `ทั้งหมด ${totalPages} ชิ้น -> ไฟล์ละ 20 ชิ้น รวมเป็น ${totalParts} ไฟล์`})`,
       percent: 5,
-      statusText: "กำลังวิเคราะห์ความกว้างมาตรฐานจากหน้ากลาง...",
+      statusText: "กำลังวิเคราะห์ความกว้างมาตรฐานจากหน้าย่อยที่ 15...",
     })
 
     try {
-      // 1. วัดขนาดความกว้างมาตรฐานจากหน้ากลางๆ (เช่น หน้า 30 จาก 150 หรือหน้ากึ่งกลาง)
-      const sampleIdx = totalPages >= 30 ? 29 : Math.floor(totalPages / 2)
+      // 1. วัดขนาดความกว้างมาตรฐานจากหน้าย่อยที่ 15 (Index 14) ของเรื่องและตอนนั้นๆ เสมอ (ไม่ล็อค 1280px)
+      const sampleIdx = totalPages >= 15 ? 14 : Math.floor(totalPages / 2)
       let standardWidth = 1280
 
       try {
@@ -648,7 +648,7 @@ export function KuaiKanLoginModal({
           standardWidth = sampleImg.naturalWidth
         }
       } catch (err) {
-        console.warn("Could not load sample middle image, trying first image:", err)
+        console.warn("Could not load slice #15, trying first image:", err)
         try {
           const firstImg = await loadImageElement(allUrls[0])
           if (firstImg && firstImg.naturalWidth && firstImg.naturalWidth > 100) {
@@ -657,7 +657,7 @@ export function KuaiKanLoginModal({
         } catch (e2) {}
       }
 
-      toast.info(`📏 ความกว้างมาตรฐาน: ${standardWidth}px (${stitchMode === "total20" ? `แบ่งรวมเป็น ${totalParts} ไฟล์` : `ไฟล์ละ 20 ชิ้น รวมเป็น ${totalParts} ไฟล์`})`)
+      toast.info(`📏 ความกว้างมาตรฐาน (หน้าย่อยที่ ${sampleIdx + 1}): ${standardWidth}px (${stitchMode === "total20" ? `แบ่งรวมเป็น ${totalParts} ไฟล์` : `ไฟล์ละ 20 ชิ้น รวมเป็น ${totalParts} ไฟล์`})`)
 
       let lastFolderUrl = ""
 

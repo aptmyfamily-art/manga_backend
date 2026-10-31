@@ -108,10 +108,12 @@ def main():
         print("No images found.")
         return
 
-    # 2. วัดขนาดความกว้างมาตรฐานจากหน้ากลางๆ (หน้า 30 หรือกึ่งกลาง)
-    sample_idx = 29 if total_images >= 30 else total_images // 2
-    print(f"2. โหลดหน้าตัวอย่าง #{sample_idx + 1} เพื่อกำหนดความกว้างมาตรฐาน...")
+    # 2. วัดขนาดความกว้างมาตรฐานจากหน้าย่อยที่ 15 (Index 14) ของเรื่อง/ตอนนั้นๆ เสมอ (ไม่ล็อค 1280px)
+    sample_idx = 14 if total_images >= 15 else total_images // 2
+    print(f"2. วัดขนาดความกว้างมาตรฐานจากหน้าย่อย #{sample_idx + 1}...")
     sample_bytes = download_image(urls[sample_idx])
+    if not sample_bytes:
+        sample_bytes = download_image(urls[0])
     sample_img = Image.open(io.BytesIO(sample_bytes))
     standard_width = sample_img.width
     print(f"✓ ความกว้างมาตรฐานคือ {standard_width}px (ขนาดหน้า #{sample_idx + 1}: {sample_img.size})")
