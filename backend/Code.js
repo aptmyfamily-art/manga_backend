@@ -2370,9 +2370,9 @@ function scrapeRawUrl(url, pattern) {
       }
     }
 
-    // 4. Kuaikanmanhua default pattern: 共377个内容
+    // 4. Kuaikanmanhua default pattern: 共366篇正文 (or fallback: 共...个内容)
     if (!matchedText) {
-      const matchKuaikan = html.match(/共\s*(\d+)\s*个内容/);
+      const matchKuaikan = html.match(/共\s*(\d+)\s*篇正文/) || html.match(/共\s*(\d+)\s*个内容/);
       if (matchKuaikan) {
         matchedText = matchKuaikan[0];
         chapterCount = parseInt(matchKuaikan[1], 10);

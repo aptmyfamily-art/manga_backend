@@ -44,6 +44,10 @@ import {
   Play,
   ArrowRight,
   Filter,
+  LayoutGrid,
+  List,
+  Flame,
+  ArrowUpDown,
 } from "lucide-react"
 
 export interface RawTrackerItem {
@@ -75,6 +79,10 @@ export function RawTrackerView({
   const [statusFilter, setStatusFilter] = React.useState<
     "all" | "new" | "current" | "error"
   >("all")
+  const [viewMode, setViewMode] = React.useState<"cards" | "table">("cards")
+  const [sortBy, setSortBy] = React.useState<
+    "urgent_first" | "name" | "recent"
+  >("urgent_first")
   const [checkingAll, setCheckingAll] = React.useState(false)
   const [singleCheckingId, setSingleCheckingId] = React.useState<string | null>(
     null
@@ -396,11 +404,139 @@ export function RawTrackerView({
     })
   }, [trackers, search, statusFilter])
 
+  const mangaMap = React.useMemo(() => {
+    const map = new Map<string, any>()
+    ;(mangaList || []).forEach((m) => {
+      if (m.mangaid != null) map.set(String(m.mangaid), m)
+    })
+    return map
+  }, [mangaList])
+
+  const getTrackerUrgency = React.useCallback(
+    (item: RawTrackerItem) => {
+      const manga =
+        item.mangaid != null ? mangaMap.get(String(item.mangaid)) : null
+      const isUrgentManga = Boolean(manga?.isurgent)
+      const hasNew = String(item.status || "").includes("มีตอนใหม่")
+      const isError = String(item.status || "").includes("ตรวจสอบไม่ได้")
+      const currentChap = parseFloat(String(item.currentChapter || "0")) || 0
+      const rawChap = parseFloat(String(item.lastrawcount || "0")) || 0
+      const rawDiff = rawChap > currentChap ? rawChap - currentChap : 0
+      const diff = rawDiff > 0 ? rawDiff : hasNew ? 1 : 0
+
+      // Level 3: Urgent manga with new chapters OR diff >= 3
+      // Level 2: Normal new chapters
+      // Level 1: Error / check failed
+      // Level 0: Up to date / pending
+      let level: 0 | 1 | 2 | 3 = 0
+      if (hasNew) {
+        if (isUrgentManga || diff >= 3) {
+          level = 3
+        } else {
+          level = 2
+        }
+      } else if (isError) {
+        level = 1
+      } else {
+        level = 0
+      }
+
+      return {
+        level,
+        isUrgentManga,
+        hasNew,
+        isError,
+        diff,
+        currentChap,
+        rawChap,
+        manga,
+      }
+    },
+    [mangaMap]
+  )
+
+  const getDomainInfo = (urlStr: string) => {
+    try {
+      const u = (urlStr || "").toLowerCase()
+      if (u.includes("kuaikan")) {
+        return {
+          label: "快看漫画",
+          color: "text-pink-300 bg-pink-500/10 border-pink-500/30",
+        }
+      }
+      if (u.includes("qq.com")) {
+        return {
+          label: "腾讯动漫",
+          color: "text-indigo-300 bg-indigo-500/10 border-indigo-500/30",
+        }
+      }
+      if (u.includes("thunderscans")) {
+        return {
+          label: "ThunderScans",
+          color: "text-emerald-300 bg-emerald-500/10 border-emerald-500/30",
+        }
+      }
+      const host = new URL(urlStr).hostname.replace(/^www\./, "")
+      return {
+        label: host,
+        color: "text-slate-300 bg-slate-800/80 border-slate-700",
+      }
+    } catch {
+      return {
+        label: "Web Raw",
+        color: "text-slate-300 bg-slate-800/80 border-slate-700",
+      }
+    }
+  }
+
+  // Sorted Trackers: Urgent & New Chapters at the top
+  const sortedTrackers = React.useMemo(() => {
+    const list = [...filteredTrackers]
+    list.sort((a, b) => {
+      if (sortBy === "urgent_first") {
+        const uA = getTrackerUrgency(a)
+        const uB = getTrackerUrgency(b)
+        // High urgency level first (3 -> 2 -> 1 -> 0)
+        if (uA.level !== uB.level) {
+          return uB.level - uA.level
+        }
+        // If both have new chapters, sort by diff descending
+        if (uA.hasNew && uB.hasNew && uA.diff !== uB.diff) {
+          return uB.diff - uA.diff
+        }
+        // If urgent manga, float above
+        if (uA.isUrgentManga !== uB.isUrgentManga) {
+          return uA.isUrgentManga ? -1 : 1
+        }
+        // Fallback to name
+        return String(a.manganame || "").localeCompare(
+          String(b.manganame || ""),
+          "th"
+        )
+      }
+      if (sortBy === "name") {
+        return String(a.manganame || "").localeCompare(
+          String(b.manganame || ""),
+          "th"
+        )
+      }
+      if (sortBy === "recent") {
+        const tA = a.lastchecked ? new Date(a.lastchecked).getTime() : 0
+        const tB = b.lastchecked ? new Date(b.lastchecked).getTime() : 0
+        return tB - tA
+      }
+      return 0
+    })
+    return list
+  }, [filteredTrackers, sortBy, getTrackerUrgency])
+
   const mangaOptions = React.useMemo(
     () =>
       mangaList.map((m) => ({
         value: String(m.mangaid),
-        label: `${m.manganame} (${m.status || "Ongoing"})`,
+        label: `${m.manganame} (${m.status || "Ongoing"})${
+          m.isurgent ? " [งานด่วน]" : ""
+        }`,
       })),
     [mangaList]
   )
@@ -437,7 +573,7 @@ export function RawTrackerView({
                 )}
               </h2>
               <p className="text-xs text-slate-400">
-                ระบบ Web Scraping ตรวจสอบหน้าเว็บอัตโนมัติทุก 1 ชม. (快看: 共377个内容 / QQ: 最新话 / ThunderScans: New Chapter)
+                ระบบ Web Scraping ตรวจสอบหน้าเว็บอัตโนมัติทุก 1 ชม. (快看: 共366篇正文 / QQ: 最新话 / ThunderScans: New Chapter)
               </p>
             </div>
           </div>
@@ -587,8 +723,9 @@ export function RawTrackerView({
             </div>
           </div>
           <div className="mt-2 text-xs text-slate-300 space-y-0.5">
-            <div>• 快看漫画 (Kuaikanmanhua): <code className="text-pink-300 text-[11px]">共(\d+)个内容</code></div>
-            <div>• 腾讯动漫 (QQ Comic): <code className="text-indigo-300 text-[11px]">第(\d+)话</code></div>
+            <div>• 快看漫画: <code className="text-pink-300 text-[11px]">共(\d+)篇正文</code></div>
+            <div>• 腾讯动漫: <code className="text-indigo-300 text-[11px]">最新话：[第...话...]</code></div>
+            <div>• ThunderScans: <code className="text-emerald-300 text-[11px]">New Chapter</code></div>
           </div>
           <div className="mt-1 text-[11px] text-slate-500">
             และรองรับ Custom Regex ทุกเว็บ
@@ -596,9 +733,9 @@ export function RawTrackerView({
         </Card>
       </div>
 
-      {/* Filter Toolbar */}
+      {/* Filter Toolbar & Sort & View Mode */}
       <Card className="p-4 bg-[#111726] border-[#26334d]">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
           <div className="flex flex-1 items-center gap-2 max-w-md">
             <div className="relative w-full">
               <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
@@ -611,7 +748,8 @@ export function RawTrackerView({
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2.5">
+            {/* Status Filter Buttons */}
             <div className="flex items-center rounded-lg border border-[#26334d] bg-[#0b1120] p-0.5 text-xs font-medium">
               <button
                 onClick={() => setStatusFilter("all")}
@@ -655,245 +793,573 @@ export function RawTrackerView({
                 ตรวจสอบไม่ได้
               </button>
             </div>
+
+            {/* Sort Selector: Urgent & New First */}
+            <div className="flex items-center gap-1.5 bg-[#0b1120] border border-[#26334d] rounded-lg px-2.5 py-1 text-xs">
+              <ArrowUpDown className="h-3.5 w-3.5 text-slate-400" />
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as any)}
+                className="bg-transparent text-slate-200 border-none outline-none cursor-pointer text-xs"
+              >
+                <option value="urgent_first" className="bg-[#0b1120] text-slate-100">
+                  🚨 มีตอนใหม่ & ด่วนสุดขึ้นก่อน
+                </option>
+                <option value="name" className="bg-[#0b1120] text-slate-100">
+                  🔤 ชื่อเรื่อง ก-ฮ
+                </option>
+                <option value="recent" className="bg-[#0b1120] text-slate-100">
+                  🕒 ตรวจสอบล่าสุด
+                </option>
+              </select>
+            </div>
+
+            {/* View Mode Toggle: Cards vs Table */}
+            <div className="flex items-center rounded-lg border border-[#26334d] bg-[#0b1120] p-0.5 text-xs">
+              <button
+                onClick={() => setViewMode("cards")}
+                className={`px-2.5 py-1.5 rounded-md transition-colors flex items-center gap-1.5 cursor-pointer ${
+                  viewMode === "cards"
+                    ? "bg-pink-600 text-white font-semibold shadow-xs"
+                    : "text-slate-400 hover:text-white"
+                }`}
+                title="มุมมองการ์ด (Card Grid)"
+              >
+                <LayoutGrid className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">การ์ด</span>
+              </button>
+              <button
+                onClick={() => setViewMode("table")}
+                className={`px-2.5 py-1.5 rounded-md transition-colors flex items-center gap-1.5 cursor-pointer ${
+                  viewMode === "table"
+                    ? "bg-pink-600 text-white font-semibold shadow-xs"
+                    : "text-slate-400 hover:text-white"
+                }`}
+                title="มุมมองตาราง (Table)"
+              >
+                <List className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">ตาราง</span>
+              </button>
+            </div>
           </div>
         </div>
       </Card>
 
-      {/* Trackers Table */}
-      <Card className="bg-[#111726] border-[#26334d] overflow-hidden">
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader className="bg-[#0e1422] border-b border-[#26334d]">
-              <TableRow className="hover:bg-transparent">
-                <TableHead className="w-12 text-center text-slate-400 font-semibold">
-                  #
-                </TableHead>
-                <TableHead className="text-slate-300 font-semibold min-w-[200px]">
-                  ชื่อเรื่อง / ลิงก์ต้นฉบับ
-                </TableHead>
-                <TableHead className="text-slate-300 font-semibold text-center min-w-[140px]">
-                  ข้อความล่าสุดจากเว็บ
-                </TableHead>
-                <TableHead className="text-slate-300 font-semibold text-center min-w-[120px]">
-                  ตอนล่าสุดในระบบ
-                </TableHead>
-                <TableHead className="text-slate-300 font-semibold text-center min-w-[160px]">
-                  สถานะอัปเดต
-                </TableHead>
-                <TableHead className="text-slate-300 font-semibold min-w-[130px]">
-                  ตรวจเช็คล่าสุด
-                </TableHead>
-                <TableHead className="text-right text-slate-300 font-semibold min-w-[180px]">
-                  การดำเนินการ
-                </TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {isLoading ? (
-                Array.from({ length: 6 }).map((_, i) => (
-                  <TableRow key={i} className="border-b border-[#26334d]/60">
-                    <TableCell colSpan={7} className="py-4">
-                      <Skeleton className="h-6 w-full bg-[#18233a]" />
-                    </TableCell>
-                  </TableRow>
-                ))
-              ) : filteredTrackers.length === 0 ? (
-                <TableRow>
-                  <TableCell
-                    colSpan={7}
-                    className="text-center py-12 text-slate-400"
-                  >
-                    <div className="flex flex-col items-center justify-center gap-2">
-                      <Radio className="h-8 w-8 text-slate-600" />
-                      <p>ไม่พบรายการติดตามที่ตรงกับเงื่อนไข</p>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={handleImportFromManga}
-                        className="mt-2 text-xs"
+      {/* TRACKERS DISPLAY: CARDS VIEW OR TABLE VIEW */}
+      {viewMode === "cards" ? (
+        isLoading ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <Card
+                key={i}
+                className="p-4 bg-[#111726] border-[#26334d] space-y-3"
+              >
+                <Skeleton className="h-6 w-3/4 bg-[#18233a]" />
+                <Skeleton className="h-4 w-1/2 bg-[#18233a]" />
+                <Skeleton className="h-12 w-full bg-[#18233a]" />
+                <Skeleton className="h-8 w-full bg-[#18233a]" />
+              </Card>
+            ))}
+          </div>
+        ) : sortedTrackers.length === 0 ? (
+          <Card className="p-12 text-center bg-[#111726] border-[#26334d]">
+            <div className="flex flex-col items-center justify-center gap-2">
+              <Radio className="h-10 w-10 text-slate-600" />
+              <p className="text-slate-400">ไม่พบรายการติดตามที่ตรงกับเงื่อนไข</p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleImportFromManga}
+                className="mt-2 text-xs"
+              >
+                กดที่นี่เพื่อซิงค์มังงะทั้งหมดในระบบเข้ามาติดตาม
+              </Button>
+            </div>
+          </Card>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {sortedTrackers.map((item) => {
+              const u = getTrackerUrgency(item)
+              const domain = getDomainInfo(item.url)
+              const isChecking = singleCheckingId === item.trackerid
+
+              // Card styling based on urgency level
+              let cardStyle =
+                "border-[#26334d] bg-[#111726] hover:border-slate-500 hover:shadow-lg"
+              let borderGlow = ""
+              if (u.level === 3) {
+                cardStyle =
+                  "border-rose-500/80 bg-gradient-to-b from-rose-950/40 via-[#111726] to-[#0c101d] ring-1 ring-rose-500/40 shadow-xl shadow-rose-950/40 hover:border-rose-400"
+                borderGlow = "from-rose-500 to-amber-500"
+              } else if (u.level === 2) {
+                cardStyle =
+                  "border-emerald-500/70 bg-gradient-to-b from-emerald-950/30 via-[#111726] to-[#0c101d] ring-1 ring-emerald-500/30 shadow-lg shadow-emerald-950/30 hover:border-emerald-400"
+                borderGlow = "from-emerald-500 to-teal-500"
+              } else if (u.level === 1) {
+                cardStyle =
+                  "border-amber-500/50 bg-gradient-to-b from-amber-950/20 via-[#111726] to-[#0c101d] hover:border-amber-400/70"
+              }
+
+              return (
+                <Card
+                  key={item.trackerid}
+                  className={`relative flex flex-col justify-between overflow-hidden transition-all duration-200 ${cardStyle}`}
+                >
+                  {/* Top glowing accent line for urgency */}
+                  {borderGlow && (
+                    <div
+                      className={`absolute top-0 left-0 right-0 h-1 bg-gradient-to-r ${borderGlow}`}
+                    />
+                  )}
+
+                  <CardHeader className="p-4 pb-2 space-y-2">
+                    {/* Top row: Domain pill & Urgency Badge */}
+                    <div className="flex items-center justify-between gap-1.5">
+                      <span
+                        className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold border ${domain.color}`}
                       >
-                        กดที่นี่เพื่อซิงค์มังงะทั้งหมดในระบบเข้ามาติดตาม
-                      </Button>
+                        {domain.label}
+                      </span>
+
+                      {/* Status / Urgency Badge */}
+                      {u.level === 3 ? (
+                        <Badge className="bg-gradient-to-r from-rose-600 to-amber-600 text-white font-bold px-2 py-0.5 shadow-md shadow-rose-600/30 animate-pulse text-[11px] flex items-center gap-1">
+                          <Flame className="h-3 w-3 fill-current" />
+                          งานด่วน (+{u.diff} ตอน)
+                        </Badge>
+                      ) : u.level === 2 ? (
+                        <Badge className="bg-emerald-600 text-white font-bold px-2 py-0.5 shadow-md shadow-emerald-600/30 text-[11px] flex items-center gap-1">
+                          <Sparkles className="h-3 w-3" />
+                          มีตอนใหม่ (+{u.diff} ตอน)
+                        </Badge>
+                      ) : u.level === 1 ? (
+                        <Badge
+                          variant="destructive"
+                          className="text-[10px] px-1.5 py-0.5 flex items-center gap-1"
+                        >
+                          <AlertCircle className="h-3 w-3" />
+                          ตรวจไม่ได้
+                        </Badge>
+                      ) : (
+                        <Badge
+                          variant="outline"
+                          className="border-slate-700 bg-slate-800/80 text-slate-300 text-[10px] px-2 py-0.5 flex items-center gap-1"
+                        >
+                          <CheckCircle2 className="h-3 w-3 text-emerald-400" />
+                          เป็นปัจจุบัน
+                        </Badge>
+                      )}
                     </div>
-                  </TableCell>
-                </TableRow>
-              ) : (
-                filteredTrackers.map((item, index) => {
-                  const hasNew = String(item.status || "").includes("มีตอนใหม่")
-                  const isErr = String(item.status || "").includes(
-                    "ตรวจสอบไม่ได้"
-                  )
-                  const isChecking = singleCheckingId === item.trackerid
 
-                  return (
-                    <TableRow
-                      key={item.trackerid}
-                      className={`border-b border-[#26334d]/60 transition-colors ${
-                        hasNew
-                          ? "bg-emerald-950/20 hover:bg-emerald-950/30"
-                          : "hover:bg-[#151d2f]/50"
-                      }`}
-                    >
-                      <TableCell className="text-center text-xs text-slate-500 font-mono">
-                        {index + 1}
-                      </TableCell>
-
-                      {/* Manga Name & Source URL */}
-                      <TableCell>
-                        <div className="space-y-1">
-                          <div className="font-semibold text-sm text-slate-100 flex items-center gap-2">
-                            <span>{item.manganame || "ไม่ระบุชื่อเรื่อง"}</span>
-                            {hasNew && (
-                              <span className="flex h-2 w-2 rounded-full bg-emerald-400 animate-ping" />
-                            )}
-                          </div>
-                          <a
-                            href={item.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 hover:underline max-w-[320px] truncate"
-                          >
-                            <ExternalLink className="h-3 w-3 shrink-0" />
-                            <span className="truncate">{item.url}</span>
-                          </a>
-                        </div>
-                      </TableCell>
-
-                      {/* Last Raw Scraped Text */}
-                      <TableCell className="text-center">
-                        {item.lastrawtext ? (
-                          <div className="inline-flex flex-col items-center">
-                            <span
-                              className="font-mono text-xs px-2.5 py-1 rounded-md bg-[#0b1120] text-pink-300 border border-pink-500/30 font-semibold shadow-xs max-w-[280px] truncate"
-                              title={item.lastrawtext}
-                            >
-                              {item.lastrawtext}
-                            </span>
-                            {item.lastrawcount && (
-                              <span className="text-[10px] text-slate-400 mt-0.5">
-                                ({item.lastrawcount} ตอน)
-                              </span>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="text-xs text-slate-500 italic">
-                            รอตรวจสอบครั้งแรก
+                    {/* Manga Title & Urgent Tag */}
+                    <div>
+                      <div className="flex items-start justify-between gap-1.5">
+                        <h3
+                          className="font-bold text-sm text-white line-clamp-1 hover:text-indigo-300 transition-colors cursor-pointer"
+                          title={item.manganame}
+                          onClick={() => handleCreateQueue(item)}
+                        >
+                          {item.manganame || "ไม่ระบุชื่อเรื่อง"}
+                        </h3>
+                        {u.isUrgentManga && (
+                          <span className="shrink-0 text-[10px] font-bold text-amber-300 bg-amber-500/20 border border-amber-500/40 rounded px-1.5 py-0.2">
+                            ด่วน
                           </span>
                         )}
-                      </TableCell>
+                      </div>
 
-                      {/* Current Chapter in System */}
-                      <TableCell className="text-center">
-                        <span className="font-mono text-xs text-slate-300 font-semibold">
-                          ตอนที่ {item.currentChapter || "-"}
-                        </span>
-                      </TableCell>
+                      {/* Source Link */}
+                      <a
+                        href={item.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-[11px] text-indigo-400 hover:text-indigo-300 hover:underline max-w-full truncate mt-0.5"
+                        title={item.url}
+                      >
+                        <ExternalLink className="h-3 w-3 shrink-0" />
+                        <span className="truncate">{item.url}</span>
+                      </a>
+                    </div>
+                  </CardHeader>
 
-                      {/* Status */}
-                      <TableCell className="text-center">
-                        {hasNew ? (
-                          <Badge className="bg-emerald-600 text-white font-bold px-3 py-1 shadow-md shadow-emerald-600/30 animate-pulse text-xs">
-                            <Sparkles className="h-3 w-3 mr-1" />
-                            {item.status}
-                          </Badge>
-                        ) : isErr ? (
-                          <Badge
-                            variant="destructive"
-                            className="text-[11px] px-2 py-0.5"
-                          >
-                            <AlertCircle className="h-3 w-3 mr-1" />
-                            {item.status}
-                          </Badge>
-                        ) : (
-                          <Badge
-                            variant="outline"
-                            className="bg-[#151d2f] text-slate-300 border-[#26334d] text-xs"
-                          >
-                            <Check className="h-3 w-3 mr-1 text-emerald-400" />
-                            {item.status || "เป็นปัจจุบัน"}
-                          </Badge>
+                  <CardContent className="p-4 pt-1 pb-3 space-y-2.5">
+                    {/* Raw Scraped Text Box */}
+                    <div className="rounded-lg bg-[#0b1120] border border-[#26334d] p-2 space-y-1">
+                      <div className="flex items-center justify-between text-[11px] text-slate-400">
+                        <span>ข้อความล่าสุดที่ตรวจพบ:</span>
+                        {item.lastrawcount && (
+                          <span className="font-semibold text-slate-300 font-mono">
+                            {item.lastrawcount} ตอน
+                          </span>
                         )}
-                      </TableCell>
+                      </div>
+                      <div
+                        className="font-mono text-xs text-pink-300 font-semibold truncate bg-black/40 px-2 py-1 rounded border border-pink-500/20"
+                        title={item.lastrawtext}
+                      >
+                        {item.lastrawtext || "ยังไม่เคยตรวจ"}
+                      </div>
+                    </div>
 
-                      {/* Last Checked */}
-                      <TableCell className="text-xs text-slate-400">
-                        <div className="flex items-center gap-1">
-                          <Clock className="h-3 w-3 text-slate-500" />
-                          <span>{formatRelativeTime(item.lastchecked)}</span>
-                        </div>
-                      </TableCell>
+                    {/* Chapter Comparison Metrics */}
+                    <div className="grid grid-cols-3 gap-1 rounded-lg bg-[#0d1322] border border-[#26334d]/60 p-2 text-center">
+                      <div>
+                        <span className="block text-[10px] text-slate-400">
+                          ในระบบ
+                        </span>
+                        <span className="font-mono text-xs font-bold text-slate-200">
+                          {item.currentChapter || "-"}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="block text-[10px] text-slate-400">
+                          ต้นฉบับ
+                        </span>
+                        <span className="font-mono text-xs font-bold text-pink-300">
+                          {item.lastrawcount || "-"}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="block text-[10px] text-slate-400">
+                          ผลต่าง
+                        </span>
+                        <span
+                          className={`font-mono text-xs font-bold ${
+                            u.hasNew
+                              ? u.level === 3
+                                ? "text-rose-400 animate-pulse font-extrabold"
+                                : "text-emerald-400 font-extrabold"
+                              : "text-slate-500"
+                          }`}
+                        >
+                          {u.hasNew ? `+${u.diff}` : "0"}
+                        </span>
+                      </div>
+                    </div>
 
-                      {/* Actions */}
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-1.5">
-                          {/* Create Queue Button if new or any */}
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className={`h-8 text-xs font-semibold ${
-                              hasNew
-                                ? "bg-emerald-600 text-white hover:bg-emerald-700 border-emerald-500 shadow-md shadow-emerald-600/30"
-                                : "text-indigo-300 border-indigo-500/30 hover:bg-indigo-600/20"
-                            }`}
-                            onClick={() => handleCreateQueue(item)}
-                            title="เปิดแบบฟอร์มเพิ่มตอนใหม่นี้เข้าสู่คิวงานทันที"
-                          >
-                            <Plus className="h-3.5 w-3.5 mr-1" />
-                            ลงคิว
-                          </Button>
+                    {/* Relative timestamp */}
+                    <div className="flex items-center justify-between text-[11px] text-slate-500 pt-0.5">
+                      <span className="flex items-center gap-1">
+                        <Clock className="h-3 w-3" />
+                        {formatRelativeTime(item.lastchecked)}
+                      </span>
+                      {item.autocheck && (
+                        <span className="text-[10px] text-indigo-400">
+                          ตรวจทุก 1 ชม.
+                        </span>
+                      )}
+                    </div>
+                  </CardContent>
 
-                          {/* Check single */}
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-8 w-8 text-slate-400 hover:text-white"
-                            onClick={() => handleCheckSingle(item)}
-                            disabled={isChecking}
-                            title="สแกนต้นฉบับเรื่องนี้ทันที"
-                          >
-                            <RefreshCw
-                              className={`h-3.5 w-3.5 ${
-                                isChecking ? "animate-spin text-amber-400" : ""
-                              }`}
-                            />
-                          </Button>
+                  {/* Card Footer Actions */}
+                  <div className="p-4 pt-0 border-t border-[#26334d]/60 mt-auto flex items-center justify-between gap-1.5 pt-3">
+                    <Button
+                      size="sm"
+                      onClick={() => handleCreateQueue(item)}
+                      className={`h-8 flex-1 text-xs font-semibold ${
+                        u.level === 3
+                          ? "bg-rose-600 hover:bg-rose-700 text-white shadow-md shadow-rose-600/30"
+                          : u.level === 2
+                          ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-md shadow-emerald-600/30"
+                          : "bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white border border-indigo-500/30"
+                      }`}
+                    >
+                      <Plus className="h-3.5 w-3.5 mr-1" />
+                      ลงคิวงาน
+                    </Button>
 
-                          {/* Edit */}
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-8 w-8 text-slate-400 hover:text-white"
-                            onClick={() => handleOpenEditModal(item)}
-                            title="แก้ไขลิงก์ / รูปแบบ"
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                          </Button>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-8 w-8 border-[#26334d] hover:bg-slate-800"
+                      onClick={() => handleCheckSingle(item)}
+                      disabled={isChecking}
+                      title="ตรวจสอบสดทันที"
+                    >
+                      <RefreshCw
+                        className={`h-3.5 w-3.5 text-slate-300 ${
+                          isChecking ? "animate-spin text-pink-400" : ""
+                        }`}
+                      />
+                    </Button>
 
-                          {/* Delete */}
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-8 w-8 text-slate-400 hover:text-rose-400"
-                            onClick={() =>
-                              handleDeleteTracker(
-                                item.trackerid,
-                                item.manganame || ""
-                              )
-                            }
-                            title="ยกเลิกการติดตามเรื่องนี้"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        </div>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-8 w-8 border-[#26334d] hover:bg-slate-800"
+                      onClick={() => handleOpenEditModal(item)}
+                      title="แก้ไข"
+                    >
+                      <Pencil className="h-3.5 w-3.5 text-slate-400 hover:text-slate-200" />
+                    </Button>
+
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-8 w-8 border-[#26334d] hover:bg-rose-950/40 hover:border-rose-500/40"
+                      onClick={() =>
+                        handleDeleteTracker(
+                          item.trackerid,
+                          item.manganame || "ไม่ระบุชื่อ"
+                        )
+                      }
+                      title="ลบรายการติดตาม"
+                    >
+                      <Trash2 className="h-3.5 w-3.5 text-rose-400" />
+                    </Button>
+                  </div>
+                </Card>
+              )
+            })}
+          </div>
+        )
+      ) : (
+        /* TABLE VIEW (Alternative compact mode) */
+        <Card className="bg-[#111726] border-[#26334d] overflow-hidden">
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader className="bg-[#0e1422] border-b border-[#26334d]">
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="w-12 text-center text-slate-400 font-semibold">
+                    #
+                  </TableHead>
+                  <TableHead className="text-slate-300 font-semibold min-w-[200px]">
+                    ชื่อเรื่อง / ลิงก์ต้นฉบับ
+                  </TableHead>
+                  <TableHead className="text-slate-300 font-semibold text-center min-w-[140px]">
+                    ข้อความล่าสุดจากเว็บ
+                  </TableHead>
+                  <TableHead className="text-slate-300 font-semibold text-center min-w-[120px]">
+                    ตอนล่าสุดในระบบ
+                  </TableHead>
+                  <TableHead className="text-slate-300 font-semibold text-center min-w-[160px]">
+                    สถานะอัปเดต
+                  </TableHead>
+                  <TableHead className="text-slate-300 font-semibold min-w-[130px]">
+                    ตรวจเช็คล่าสุด
+                  </TableHead>
+                  <TableHead className="text-right text-slate-300 font-semibold min-w-[180px]">
+                    การดำเนินการ
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {isLoading ? (
+                  Array.from({ length: 6 }).map((_, i) => (
+                    <TableRow key={i} className="border-b border-[#26334d]/60">
+                      <TableCell colSpan={7} className="py-4">
+                        <Skeleton className="h-6 w-full bg-[#18233a]" />
                       </TableCell>
                     </TableRow>
-                  )
-                })
-              )}
-            </TableBody>
-          </Table>
-        </div>
-      </Card>
+                  ))
+                ) : sortedTrackers.length === 0 ? (
+                  <TableRow>
+                    <TableCell
+                      colSpan={7}
+                      className="text-center py-12 text-slate-400"
+                    >
+                      <div className="flex flex-col items-center justify-center gap-2">
+                        <Radio className="h-8 w-8 text-slate-600" />
+                        <p>ไม่พบรายการติดตามที่ตรงกับเงื่อนไข</p>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleImportFromManga}
+                          className="mt-2 text-xs"
+                        >
+                          กดที่นี่เพื่อซิงค์มังงะทั้งหมดในระบบเข้ามาติดตาม
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  sortedTrackers.map((item, index) => {
+                    const u = getTrackerUrgency(item)
+                    const isChecking = singleCheckingId === item.trackerid
+
+                    let rowBg = "hover:bg-[#151d2f]/50"
+                    if (u.level === 3) {
+                      rowBg = "bg-rose-950/20 hover:bg-rose-950/30 border-l-4 border-l-rose-500"
+                    } else if (u.level === 2) {
+                      rowBg = "bg-emerald-950/20 hover:bg-emerald-950/30 border-l-4 border-l-emerald-500"
+                    } else if (u.level === 1) {
+                      rowBg = "bg-amber-950/15 hover:bg-amber-950/25 border-l-4 border-l-amber-500"
+                    }
+
+                    return (
+                      <TableRow
+                        key={item.trackerid}
+                        className={`border-b border-[#26334d]/60 transition-colors ${rowBg}`}
+                      >
+                        <TableCell className="text-center text-xs text-slate-500 font-mono">
+                          {index + 1}
+                        </TableCell>
+
+                        {/* Manga Name & Source URL */}
+                        <TableCell>
+                          <div className="space-y-1">
+                            <div className="font-semibold text-sm text-slate-100 flex items-center gap-2">
+                              <span>{item.manganame || "ไม่ระบุชื่อเรื่อง"}</span>
+                              {u.isUrgentManga && (
+                                <span className="text-[10px] font-bold text-amber-300 bg-amber-500/20 border border-amber-500/40 rounded px-1.5 py-0.2">
+                                  ด่วน
+                                </span>
+                              )}
+                              {u.hasNew && (
+                                <span className="flex h-2 w-2 rounded-full bg-emerald-400 animate-ping" />
+                              )}
+                            </div>
+                            <a
+                              href={item.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 hover:underline max-w-[320px] truncate"
+                            >
+                              <ExternalLink className="h-3 w-3 shrink-0" />
+                              <span className="truncate">{item.url}</span>
+                            </a>
+                          </div>
+                        </TableCell>
+
+                        {/* Last Raw Scraped Text */}
+                        <TableCell className="text-center">
+                          {item.lastrawtext ? (
+                            <div className="inline-flex flex-col items-center">
+                              <span
+                                className="font-mono text-xs px-2.5 py-1 rounded-md bg-[#0b1120] text-pink-300 border border-pink-500/30 font-semibold shadow-xs max-w-[280px] truncate"
+                                title={item.lastrawtext}
+                              >
+                                {item.lastrawtext}
+                              </span>
+                              {item.lastrawcount && (
+                                <span className="text-[10px] text-slate-400 mt-0.5">
+                                  ({item.lastrawcount} ตอน)
+                                </span>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-xs text-slate-500 italic">
+                              รอตรวจสอบครั้งแรก
+                            </span>
+                          )}
+                        </TableCell>
+
+                        {/* Current Chapter in System */}
+                        <TableCell className="text-center">
+                          <span className="font-mono text-xs text-slate-300 font-semibold">
+                            ตอนที่ {item.currentChapter || "-"}
+                          </span>
+                        </TableCell>
+
+                        {/* Status */}
+                        <TableCell className="text-center">
+                          {u.level === 3 ? (
+                            <Badge className="bg-gradient-to-r from-rose-600 to-amber-600 text-white font-bold px-2.5 py-1 shadow-md shadow-rose-600/30 animate-pulse text-xs">
+                              <Flame className="h-3 w-3 mr-1 fill-current" />
+                              งานด่วน (+{u.diff} ตอน)
+                            </Badge>
+                          ) : u.level === 2 ? (
+                            <Badge className="bg-emerald-600 text-white font-bold px-3 py-1 shadow-md shadow-emerald-600/30 text-xs">
+                              <Sparkles className="h-3 w-3 mr-1" />
+                              มีตอนใหม่ (+{u.diff} ตอน)
+                            </Badge>
+                          ) : u.level === 1 ? (
+                            <Badge
+                              variant="destructive"
+                              className="text-[11px] px-2 py-0.5"
+                            >
+                              <AlertCircle className="h-3 w-3 mr-1" />
+                              {item.status}
+                            </Badge>
+                          ) : (
+                            <Badge
+                              variant="outline"
+                              className="bg-[#151d2f] text-slate-300 border-[#26334d] text-xs"
+                            >
+                              <Check className="h-3 w-3 mr-1 text-emerald-400" />
+                              {item.status || "เป็นปัจจุบัน"}
+                            </Badge>
+                          )}
+                        </TableCell>
+
+                        {/* Last Checked */}
+                        <TableCell className="text-xs text-slate-400">
+                          <div className="flex items-center gap-1">
+                            <Clock className="h-3 w-3 text-slate-500" />
+                            <span>{formatRelativeTime(item.lastchecked)}</span>
+                          </div>
+                        </TableCell>
+
+                        {/* Actions */}
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className={`h-8 text-xs font-semibold ${
+                                u.level === 3
+                                  ? "bg-rose-600 text-white hover:bg-rose-700 border-rose-500 shadow-md shadow-rose-600/30"
+                                  : u.level === 2
+                                  ? "bg-emerald-600 text-white hover:bg-emerald-700 border-emerald-500 shadow-md shadow-emerald-600/30"
+                                  : "text-indigo-300 border-indigo-500/30 hover:bg-indigo-600/20"
+                              }`}
+                              onClick={() => handleCreateQueue(item)}
+                              title="เปิดแบบฟอร์มเพิ่มตอนใหม่นี้เข้าสู่คิวงานทันที"
+                            >
+                              <Plus className="h-3.5 w-3.5 mr-1" />
+                              ลงคิว
+                            </Button>
+
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-8 w-8 text-slate-400 hover:text-white"
+                              onClick={() => handleCheckSingle(item)}
+                              disabled={isChecking}
+                              title="สแกนต้นฉบับเรื่องนี้ทันที"
+                            >
+                              <RefreshCw
+                                className={`h-3.5 w-3.5 ${
+                                  isChecking ? "animate-spin text-amber-400" : ""
+                                }`}
+                              />
+                            </Button>
+
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-8 w-8 text-slate-400 hover:text-white"
+                              onClick={() => handleOpenEditModal(item)}
+                              title="แก้ไขลิงก์ / รูปแบบ"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-8 w-8 text-slate-400 hover:text-rose-400"
+                              onClick={() =>
+                                handleDeleteTracker(
+                                  item.trackerid,
+                                  item.manganame || ""
+                                )
+                              }
+                              title="ยกเลิกการติดตามเรื่องนี้"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </Card>
+      )}
 
       {/* Add / Edit Tracker Modal */}
       <Dialog open={modalOpen} onOpenChange={setModalOpen}>
@@ -972,10 +1438,10 @@ export function RawTrackerView({
                 <span className="text-slate-500">พรีเซ็ตแนะนำ:</span>
                 <button
                   type="button"
-                  onClick={() => setFormPattern("共(\\d+)个内容")}
+                  onClick={() => setFormPattern("共(\\d+)篇正文")}
                   className="text-pink-400 hover:underline cursor-pointer"
                 >
-                  [快看: 共(\d+)个内容]
+                  [快看: 共(\d+)篇正文]
                 </button>
                 <button
                   type="button"
