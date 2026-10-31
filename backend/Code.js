@@ -2797,6 +2797,7 @@ function getKuaikanAuthStatus() {
     updatedAt: session.updatedAt || '',
     isVip: Boolean(session.isVip),
     user: session.user || null,
+    cookie: session.cookie || '',
     cookiePreview: session.cookie.substring(0, 20) + '...'
   };
 }
@@ -2937,46 +2938,51 @@ function normalizeKuaikanImageUrl(url) {
  * Regex แกะภาพจากโครงสร้าง HTML ของ KuaiKan:
  * <div class="comicDetails"><div class="imgList"><div class="img-box"><img data-src="https://tn1.kkmh.com/image/c855368/..." ...>
  */
+/**
+ * Regex แกะภาพจากโครงสร้าง HTML ของ KuaiKan:
+ * รองรับทั้ง DOM (<div class="img-box">) และ Nuxt SSR State (<script>window.__NUXT__</script>)
+ * ถอดรหัส Unicode Escape (\u002F) และตัดภาพแนะนำ/ภาพโฆษณาออก 100%
+ */
 function extractComicImagesFromHtml(html, comicId) {
   const urls = [];
   if (!html || typeof html !== 'string') return urls;
-  const targetId = comicId || '855368';
+  const targetId = String(comicId || '855368');
 
-  // Pattern 1: data-src ภายใน .img-box (format /image/c855368/ หรือ /image/c\d+/)
-  const regex = /data-src=["'](https?:\/\/[^"'\s]*kkmh\.com\/image\/c(?:\d+)\/[^"'\s]+)["']/gi;
+  // 1. ถอดรหัส Unicode escape เช่น \u002F -> / และ \/ -> /
+  const decodedHtml = html.replace(/\\u002F/gi, '/').replace(/\\\//g, '/');
+
+  const seenKeys = {};
+
+  // 2. Regex ค้นหาภาพตอนที่มี /image/c<targetId>/ หรือ /image/c\d+/
+  const targetRegex = new RegExp('https?:\\/\\/[^"\'\\s<>]*(?:kkmh\\.com)\\/image\\/c' + targetId + '\\/[^"\'\\s<>&]+', 'gi');
   let match;
-  while ((match = regex.exec(html)) !== null) {
-    const u = match[1].replace(/&amp;/g, '&');
-    if (urls.indexOf(u) === -1) {
-      urls.push(u);
+  while ((match = targetRegex.exec(decodedHtml)) !== null) {
+    const rawUrl = match[0].replace(/&amp;/g, '&');
+    // ดึงคีย์ภาพที่ไม่ซ้ำ เช่น uzBt0nZ2l
+    const keyMatch = rawUrl.match(/\/image\/c\d+\/\d+\/([^.]+)/i);
+    const key = keyMatch ? keyMatch[1] : rawUrl;
+    if (!seenKeys[key]) {
+      seenKeys[key] = true;
+      urls.push(normalizeKuaikanImageUrl(rawUrl));
     }
   }
 
-  // Pattern 2: src ภายใน .img-box ที่เป็นภาพตอน (ไม่เอา data:image)
+  // 3. Fallback ค้นหาภาพ /image/c\d+/ ทั่วไป
   if (!urls.length) {
-    const srcRegex = /<div[^>]*class=["'][^"']*img-box[^"']*["'][^>]*>[\s\S]*?<img[^>]+src=["'](https?:\/\/[^"'\s]*kkmh\.com\/image\/c(?:\d+)\/[^"'\s]+)["']/gi;
+    const genericRegex = /https?:\/\/[^"'\s<>]*(?:kkmh\.com)\/image\/c\d+\/[^"'\s<>&]+/gi;
     let m2;
-    while ((m2 = srcRegex.exec(html)) !== null) {
-      const u = m2[1].replace(/&amp;/g, '&');
-      if (urls.indexOf(u) === -1) {
-        urls.push(u);
+    while ((m2 = genericRegex.exec(decodedHtml)) !== null) {
+      const rawUrl = m2[0].replace(/&amp;/g, '&');
+      const keyMatch = rawUrl.match(/\/image\/c\d+\/\d+\/([^.]+)/i);
+      const key = keyMatch ? keyMatch[1] : rawUrl;
+      if (!seenKeys[key]) {
+        seenKeys[key] = true;
+        urls.push(normalizeKuaikanImageUrl(rawUrl));
       }
     }
   }
 
-  // Pattern 3: Fallback ค้นหา URL ที่มี /image/c<comicId>/ ทั้งหมดใน HTML
-  if (!urls.length) {
-    const rawRegex = new RegExp('https?:\\/\\/[^"\'\\s]*kkmh\\.com\\/image\\/c' + targetId + '\\/[^"\'\\s<>&]+', 'gi');
-    let m3;
-    while ((m3 = rawRegex.exec(html)) !== null) {
-      const u = m3[0].replace(/&amp;/g, '&');
-      if (urls.indexOf(u) === -1) {
-        urls.push(u);
-      }
-    }
-  }
-
-  return urls.map(normalizeKuaikanImageUrl);
+  return urls;
 }
 
 /**
@@ -3104,25 +3110,10 @@ function testKuaikanLatestChapter(comicId, overrideCookie) {
     let isPay = false;
     let isLogin = false;
 
-    // Priority 0: Check if session has stored allImages from client sync (filter strictly for real comic images with /image/c)
-    if (session && session.test && session.test.allImages && session.test.allImages.length > 1 && (!comicId || comicId === session.test.comicId)) {
-      const validComicImgs = session.test.allImages.filter(function(img) {
-        const u = typeof img === 'string' ? img : (img.url1280 || img.url);
-        return u && (u.indexOf('/image/c') !== -1 || u.indexOf('/c' + targetComicId) !== -1);
-      });
-      if (validComicImgs.length > 0) {
-        rawImages = validComicImgs;
-        title = session.test.title || '';
-        topicTitle = session.test.topicTitle || '';
-        isPay = Boolean(session.test.isPay);
-        isLogin = Boolean(session.test.isLogin);
-      }
-    }
-
-    // 1. Try mobile/app API first if no cached images
-    if (!rawImages.length) {
-      const url = 'https://api.kkmh.com/v2/comic/' + targetComicId + '?is_preview=0';
-      const res = UrlFetchApp.fetch(url, {
+    // 1. ส่ง Web Scraping ไปดึง HTML ของตอนจาก KuaiKan โดยตรง (ใช้ Cookie VIP ที่ล็อกอินไว้)
+    try {
+      const webUrl = 'https://www.kuaikanmanhua.com/webs/comic-next/' + targetComicId;
+      const webRes = UrlFetchApp.fetch(webUrl, {
         method: 'get',
         muteHttpExceptions: true,
         headers: {
@@ -3131,27 +3122,32 @@ function testKuaikanLatestChapter(comicId, overrideCookie) {
           'Cookie': cookie || ''
         }
       });
+      const webHtml = webRes.getContentText();
 
-      try {
-        const data = JSON.parse(res.getContentText());
-        if (data && data.data) {
-          const comic = data.data;
-          title = comic.title || '';
-          topicTitle = comic.topic ? comic.topic.title : '';
-          isPay = Boolean(comic.selling_kk_currency);
-          isLogin = Boolean(comic.is_login);
-          rawImages = comic.comic_images || comic.images || [];
-        }
-      } catch (parseErr) {
-        console.error('api.kkmh.com parse error:', parseErr);
+      // สกัด Chapter Title และ Topic Title จากแท็ก <title> (เช่น 第366话 真真假假｜我！天命大反派漫画...)
+      const titleTagMatch = webHtml.match(/<title>(.*?)<\/title>/i);
+      if (titleTagMatch && titleTagMatch[1]) {
+        const fullTitle = titleTagMatch[1];
+        const parts = fullTitle.split('｜');
+        if (parts.length > 0 && parts[0]) title = parts[0].trim();
+        if (parts.length > 1 && parts[1]) topicTitle = parts[1].replace(/漫画.*$/, '').trim();
       }
+
+      // สกัดภาพตอนแท้ทั้งหมดผ่าน extractComicImagesFromHtml
+      const scrapedImgs = extractComicImagesFromHtml(webHtml, targetComicId);
+      if (scrapedImgs && scrapedImgs.length > 0) {
+        rawImages = scrapedImgs;
+        isLogin = true;
+      }
+    } catch (scrapeErr) {
+      console.error('Direct web scraping error:', scrapeErr);
     }
 
-    // 2. If locked or <= 1 image, also fallback to Web Viewer page (Nuxt SSR)
+    // 2. หาก Web Scraping ได้ภาพน้อยหรือไม่สำเร็จ ให้ Fallback ไปที่ API หรือ Session ที่บันทึกไว้
     if (rawImages.length <= 1) {
+      const url = 'https://api.kkmh.com/v2/comic/' + targetComicId + '?is_preview=0';
       try {
-        const webUrl = 'https://www.kuaikanmanhua.com/webs/comic-next/' + targetComicId;
-        const webRes = UrlFetchApp.fetch(webUrl, {
+        const res = UrlFetchApp.fetch(url, {
           method: 'get',
           muteHttpExceptions: true,
           headers: {
@@ -3160,16 +3156,26 @@ function testKuaikanLatestChapter(comicId, overrideCookie) {
             'Cookie': cookie || ''
           }
         });
-        const webHtml = webRes.getContentText();
-        
-        // ใช้ฟังก์ชัน extractComicImagesFromHtml แกะภาพเฉพาะจาก .img-box / .imgList format /image/c855368/
-        const parsedImgs = extractComicImagesFromHtml(webHtml, targetComicId);
-        if (parsedImgs.length > 0) {
-          rawImages = parsedImgs;
+        const data = JSON.parse(res.getContentText());
+        if (data && data.data) {
+          const comic = data.data;
+          if (!title) title = comic.title || '';
+          if (!topicTitle) topicTitle = comic.topic ? comic.topic.title : '';
+          isPay = Boolean(comic.selling_kk_currency);
+          isLogin = Boolean(comic.is_login);
+          const apiImgs = comic.comic_images || comic.images || [];
+          if (apiImgs.length > 0) rawImages = apiImgs;
         }
-      } catch (webErr) {
-        console.error('Web viewer fallback error:', webErr);
+      } catch (parseErr) {
+        console.error('api.kkmh.com parse error:', parseErr);
       }
+    }
+
+    // 3. Fallback สุดท้าย: แคชจาก session
+    if (rawImages.length <= 1 && session && session.test && session.test.allImages && session.test.allImages.length > 1) {
+      rawImages = session.test.allImages;
+      if (!title) title = session.test.title || '';
+      if (!topicTitle) topicTitle = session.test.topicTitle || '';
     }
 
     // Filter rawImages to ensure only real chapter comic images are kept (contains /image/c)
