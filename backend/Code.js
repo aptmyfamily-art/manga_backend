@@ -771,9 +771,14 @@ function getWorkQueue(forceRefresh = false, month = 'all', year = 'all', include
       if (mStr === 'all' && yStr === 'all') {
         results.push(obj);
       } else {
-        if (!obj.createdat) continue;
-        const d = new Date(obj.createdat);
-        if (isNaN(d.getTime())) continue;
+        let d = null;
+        const idNum = parseInt(obj.queueid);
+        if (!isNaN(idNum) && idNum > 1000000000000 && idNum < 2500000000000) {
+          d = new Date(idNum);
+        } else if (obj.createdat) {
+          d = new Date(obj.createdat);
+        }
+        if (!d || isNaN(d.getTime())) continue;
         const mMatch = mStr === 'all' || String(d.getMonth() + 1) === mStr;
         const yMatch = yStr === 'all' || String(d.getFullYear()) === yStr;
         if (mMatch && yMatch) {

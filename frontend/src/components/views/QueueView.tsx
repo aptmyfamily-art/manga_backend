@@ -19,6 +19,7 @@ import {
   extractStepLinks,
   formatDuration,
   getChapterCount,
+  getQueueItemDate,
   isStepDone,
   isUrgentManga,
   parseQueueDate,
@@ -173,9 +174,9 @@ export function QueueView({
       .trim()
 
     return queueList.filter((q) => {
-      // Month / Year
+      // Month / Year (Uses true task date)
       if (monthFilter !== "all" || yearFilter !== "all") {
-        const d = parseQueueDate(q.createdat)
+        const d = getQueueItemDate(q)
         if (!d) return false
         const mMatch =
           monthFilter === "all" || String(d.getMonth() + 1) === monthFilter

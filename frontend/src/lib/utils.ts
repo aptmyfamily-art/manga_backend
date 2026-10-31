@@ -52,6 +52,19 @@ export function parseQueueDate(dateStr: any): Date | null {
   return isNaN(d.getTime()) ? null : d
 }
 
+/**
+ * Returns the true creation/start date of a queue item.
+ * Uses QueueID millisecond timestamp if available, fallback to CreatedAt.
+ */
+export function getQueueItemDate(q: any): Date | null {
+  if (!q) return null
+  const idNum = typeof q.queueid === 'number' ? q.queueid : parseInt(q.queueid, 10)
+  if (!isNaN(idNum) && idNum > 1000000000000 && idNum < 2500000000000) {
+    return new Date(idNum)
+  }
+  return parseQueueDate(q.createdat)
+}
+
 export function getChapterCount(chapterStr: any, treatSingleAsCount = false): number {
   if (!chapterStr) return 0
   const s = chapterStr.toString().trim()

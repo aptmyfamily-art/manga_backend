@@ -6,6 +6,7 @@ import {
   THAI_MONTHS,
   getChapterCount,
   getQueueCurrentStep,
+  getQueueItemDate,
   getThaiDayName,
   isUrgentManga,
   parseQueueDate,
@@ -52,7 +53,8 @@ export function DashboardView({
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
     let finishedThisWeek = 0
     queueList.forEach((q) => {
-      if (q.poststatus === "เสร็จแล้ว" && new Date(q.createdat) >= sevenDaysAgo) {
+      const qd = getQueueItemDate(q)
+      if (q.poststatus === "เสร็จแล้ว" && qd && qd >= sevenDaysAgo) {
         finishedThisWeek += getChapterCount(q.chapter)
       }
     })
@@ -116,7 +118,7 @@ export function DashboardView({
         year === now.getFullYear()
 
       const queueItemsOnDay = queueList.filter((q) => {
-        const qDate = parseQueueDate(q.createdat)
+        const qDate = getQueueItemDate(q)
         if (!qDate) return false
         const isSameDay =
           qDate.getDate() === day &&
