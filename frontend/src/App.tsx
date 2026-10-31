@@ -15,6 +15,7 @@ import { TeamView } from "@/components/views/TeamView"
 import { FinancialsView } from "@/components/views/FinancialsView"
 import { BudgetView } from "@/components/views/BudgetView"
 import { MangaSettingsView } from "@/components/views/MangaSettingsView"
+import { ConnectorsView } from "@/components/views/ConnectorsView"
 import { MangaModal } from "@/components/modals/MangaModal"
 import { KuaiKanLoginModal } from "@/components/modals/KuaiKanLoginModal"
 import {
@@ -47,12 +48,14 @@ import {
   Lock,
   Radio,
   QrCode,
+  Plug,
 } from "lucide-react"
 
 type ViewKey =
   | "dashboard"
   | "queue"
   | "tracker"
+  | "connectors"
   | "expenses"
   | "team"
   | "financials"
@@ -65,6 +68,7 @@ function getViewFromLocation(): ViewKey {
     "dashboard",
     "queue",
     "tracker",
+    "connectors",
     "expenses",
     "team",
     "financials",
@@ -354,6 +358,7 @@ export default function App() {
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
     { id: "queue", label: "จัดการคิวงาน", icon: ClipboardList },
     { id: "tracker", label: "ติดตามต้นฉบับ", icon: Radio },
+    { id: "connectors", label: "จัดการตัวเชื่อมต่อ", icon: Plug },
     { id: "expenses", label: "สรุปรายจ่ายรายเดือน", icon: Receipt },
     { id: "team", label: "จัดการทีมงาน", icon: Users },
     { id: "financials", label: "รายงานกำไร-ขาดทุน", icon: TrendingUp },
@@ -470,12 +475,12 @@ export default function App() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setKuaikanModalOpen(true)}
+              onClick={() => changeView("connectors")}
               className="border-amber-500/40 bg-amber-950/20 text-amber-300 hover:bg-amber-900/30 gap-1.5 text-xs font-semibold shadow-xs"
-              title="เชื่อมต่อบัญชี KuaiKan VIP ผ่าน WeChat QR"
+              title="จัดการตัวเชื่อมต่อและ KuaiKan VIP"
             >
-              <QrCode className="h-3.5 w-3.5 text-amber-400" />
-              <span className="hidden sm:inline">KuaiKan VIP</span>
+              <Plug className="h-3.5 w-3.5 text-amber-400" />
+              <span className="hidden sm:inline">จัดการตัวเชื่อมต่อ</span>
             </Button>
 
             <Button
@@ -543,8 +548,12 @@ export default function App() {
                 setPreselectedQueueChapter(nextChap || "")
                 setAddQueueOpen(true)
               }}
-              onOpenKuaikanModal={() => setKuaikanModalOpen(true)}
+              onOpenKuaikanModal={() => changeView("connectors")}
             />
+          )}
+
+          {activeView === "connectors" && (
+            <ConnectorsView mangaList={mangaList} />
           )}
 
           {activeView === "expenses" && (

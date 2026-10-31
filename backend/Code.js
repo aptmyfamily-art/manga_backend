@@ -2923,14 +2923,20 @@ function checkKuaikanQrStatus(payload) {
 }
 
 /**
- * แปลงลิงก์ CDN ของ KuaiKan ให้เป็น f2.kkmh.com Full HD และตัดพารามิเตอร์ Thumbnail ออก เพื่อป้องกัน 403 Forbidden
+ * ตรวจสอบและจัดโครงสร้าง URL ภาพ KuaiKan โดยอิงตาม Domain {subdomain}.kkmh.com/image/...
+ * ตรวจสอบความถูกต้องของโดเมนและรักษา query parameter (sign & t) ให้ครบถ้วน
  */
 function normalizeKuaikanImageUrl(url) {
   if (!url) return '';
-  let u = String(url).trim();
-  u = u.replace(/https?:\/\/tn\d+(?:-f\d+)?\.kkmh\.com/g, 'https://f2.kkmh.com');
-  u = u.replace(/-t\.w\d+.*$/i, '');
-  u = u.replace(/-w\d+.*$/i, '');
+  let u = String(url).trim().replace(/&amp;/g, '&');
+  // หากเป็น relative path ให้เติม https://tn1.kkmh.com
+  if (u.startsWith('/image/')) {
+    u = 'https://tn1.kkmh.com' + u;
+  }
+  // แปลง http:// เป็น https:// เสมอ
+  if (u.startsWith('http://')) {
+    u = u.replace('http://', 'https://');
+  }
   return u;
 }
 
@@ -3385,9 +3391,10 @@ function uploadChapterStitchedPart(payload) {
     const createdFile = targetFolder.createFile(blob);
     const fileUrl = createdFile.getUrl();
 
-    // 5. If last part, auto add/update WorkQueue
+    // 5. If last part, auto add/update WorkQueue (ข้ามหากเป็นการทดสอบ หรือกำหนด skipQueue: true)
     let queueRes = null;
-    if (payload.isLastPart && payload.mangaId) {
+    const shouldAddToQueue = payload.isLastPart && payload.mangaId && !payload.skipQueue && !payload.isTest;
+    if (shouldAddToQueue) {
       try {
         queueRes = addQueue({
           mangaid: payload.mangaId,
@@ -3509,9 +3516,9 @@ function downloadKuaikanChapterToDrive(payload) {
       }
     }
 
-    // 3. Auto add to Queue
+    // 3. Auto add to Queue (ข้ามหากเป็นการทดสอบ หรือกำหนด skipQueue: true)
     let queueRes = null;
-    if (mangaId) {
+    if (mangaId && !payload.skipQueue && !payload.isTest) {
       queueRes = addQueue({
         mangaid: mangaId,
         chapter: chapter.replace(/[^\d.]/g, '') || '366',
