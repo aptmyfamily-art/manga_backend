@@ -3239,3 +3239,12 @@ function downloadKuaikanChapterToDrive(payload) {
     return { error: err.toString() };
   }
 }
+
+/**
+ * ฟังก์ชันสำหรับให้สิทธิ์ (Authorize) Google Drive ใน Apps Script Editor ครั้งแรก
+ */
+function authDrive() {
+  const root = DriveApp.getRootFolder();
+  Logger.log('Google Drive ได้รับสิทธิ์เรียบร้อยแล้ว: ' + root.getName());
+  return 'Authorized: ' + root.getName();
+}
