@@ -12,6 +12,7 @@ const BUDGET_TRANSACTION_SHEET_NAME = 'BudgetTransactions';
 const MANGA_SALES_SHEET_NAME = 'MangaSales';
 const WEBSITE_SHEET_NAME = 'Websites';
 const ACCESS_PASSCODE = '10211032';
+const FINANCIAL_PASSCODE = '720102';
 const RAW_TRACKER_SHEET_NAME = 'RawTracker';
 
 // --- TELEGRAM CONFIGURATION ---
@@ -50,7 +51,7 @@ function doGet(e) {
       });
     }
 
-    if (params.passcode !== ACCESS_PASSCODE) {
+    if (params.passcode !== ACCESS_PASSCODE && params.passcode !== FINANCIAL_PASSCODE) {
       return createJsonResponse({ status: 'error', message: 'รหัสผ่านไม่ถูกต้อง (Unauthorized)' });
     }
 
@@ -97,9 +98,12 @@ function doPost(e) {
     }
 
     // Allow passcode verification endpoint without prior auth
-    if (action === 'VERIFY_PASSCODE') {
+    if (action === 'VERIFY_PASSCODE' || action === 'VERIFY_FINANCIAL_PASSCODE') {
       const codeToVerify = payload.passcode !== undefined ? payload.passcode : passcode;
-      const isValid = verifyPasscode(String(codeToVerify || '').trim());
+      const isFinancial = action === 'VERIFY_FINANCIAL_PASSCODE' || payload.type === 'financial';
+      const isValid = isFinancial
+        ? verifyFinancialPasscode(String(codeToVerify || '').trim())
+        : verifyPasscode(String(codeToVerify || '').trim());
       return createJsonResponse({
         status: 'success',
         data: { valid: isValid }
@@ -107,7 +111,8 @@ function doPost(e) {
     }
 
     // Verify passcode on every API call
-    if (String(passcode || '').trim() !== ACCESS_PASSCODE) {
+    const reqPass = String(passcode || '').trim();
+    if (reqPass !== ACCESS_PASSCODE && reqPass !== FINANCIAL_PASSCODE) {
       return createJsonResponse({
         status: 'error',
         code: 'UNAUTHORIZED',
@@ -2024,6 +2029,10 @@ function getFinancialInitData() {
 
 function verifyPasscode(pass) {
   return pass === ACCESS_PASSCODE;
+}
+
+function verifyFinancialPasscode(pass) {
+  return pass === FINANCIAL_PASSCODE;
 }
 
 /**

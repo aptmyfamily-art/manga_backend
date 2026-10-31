@@ -107,6 +107,7 @@ export default function App() {
 
   // Sensitive view passcode modal (Financials / Budget)
   const [sensitiveGateOpen, setSensitiveGateOpen] = React.useState(false)
+  const [financialUnlocked, setFinancialUnlocked] = React.useState(false)
   const [pendingSensitiveView, setPendingSensitiveView] =
     React.useState<ViewKey | null>(null)
   const [sensitivePassInput, setSensitivePassInput] = React.useState("")
@@ -278,9 +279,18 @@ export default function App() {
     setTeamList(newTeam)
   }
 
+  // Prompt sensitive gate if user navigated directly to financials or budget without unlocking
+  React.useEffect(() => {
+    if ((activeView === "financials" || activeView === "budget") && !financialUnlocked) {
+      setPendingSensitiveView(activeView)
+      setSensitivePassInput("")
+      setSensitiveGateOpen(true)
+    }
+  }, [activeView, financialUnlocked])
+
   const handleNavClick = (view: ViewKey) => {
     setSidebarOpen(false)
-    if (view === "financials" || view === "budget") {
+    if ((view === "financials" || view === "budget") && !financialUnlocked) {
       setPendingSensitiveView(view)
       setSensitivePassInput("")
       setSensitiveGateOpen(true)
@@ -289,22 +299,32 @@ export default function App() {
     changeView(view)
   }
 
+  const handleCloseSensitiveGate = () => {
+    setSensitiveGateOpen(false)
+    if (!financialUnlocked && (activeView === "financials" || activeView === "budget")) {
+      changeView("dashboard")
+    }
+  }
+
   const handleVerifySensitivePass = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!sensitivePassInput.trim()) return
     setVerifyingSensitive(true)
     try {
-      const res = await callGasApi<{ valid: boolean }>("VERIFY_PASSCODE", {
+      const res = await callGasApi<{ valid: boolean }>("VERIFY_FINANCIAL_PASSCODE", {
         passcode: sensitivePassInput.trim(),
+        type: "financial",
       })
       if (res && res.valid) {
+        setFinancialUnlocked(true)
         setSensitiveGateOpen(false)
         if (pendingSensitiveView) {
           changeView(pendingSensitiveView)
           setPendingSensitiveView(null)
         }
+        toast.success("ปลดล็อคข้อมูลการเงินสำเร็จ")
       } else {
-        toast.error("รหัสผ่านไม่ถูกต้อง")
+        toast.error("รหัสผ่านการเงินไม่ถูกต้อง")
       }
     } catch (err: any) {
       toast.error(err.message || "เกิดข้อผิดพลาดในการตรวจสอบรหัสผ่าน")
@@ -649,7 +669,7 @@ export default function App() {
       {/* Passcode Prompt for Financials / Budget */}
       <Dialog
         open={sensitiveGateOpen}
-        onOpenChange={(v) => !v && setSensitiveGateOpen(false)}
+        onOpenChange={(v) => !v && handleCloseSensitiveGate()}
       >
         <DialogContent className="max-w-sm">
           <DialogHeader>
@@ -660,10 +680,10 @@ export default function App() {
           </DialogHeader>
           <form onSubmit={handleVerifySensitivePass} className="space-y-4 mt-2">
             <div className="space-y-1.5">
-              <Label>กรุณากรอกรหัสผ่าน</Label>
+              <Label>กรุณากรอกรหัสผ่านการเงิน</Label>
               <Input
                 type="password"
-                placeholder="รหัสผ่าน..."
+                placeholder="รหัสผ่านการเงิน..."
                 value={sensitivePassInput}
                 onChange={(e) => setSensitivePassInput(e.target.value)}
                 autoFocus
@@ -673,7 +693,7 @@ export default function App() {
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => setSensitiveGateOpen(false)}
+                onClick={handleCloseSensitiveGate}
               >
                 ยกเลิก
               </Button>
