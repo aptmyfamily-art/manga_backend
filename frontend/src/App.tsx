@@ -504,7 +504,6 @@ export default function App() {
           {activeView === "tracker" && (
             <RawTrackerView
               mangaList={mangaList}
-              queueList={queueList}
               onOpenAddQueueWithManga={(mangaId, nextChap) => {
                 setPreselectedQueueMangaId(mangaId)
                 setPreselectedQueueChapter(nextChap || "")
