@@ -3354,7 +3354,7 @@ function getOrCreateChapterFolder(mangaName, chapterName) {
 
 /**
  * บันทึกไฟล์ภาพตอนที่เย็บแล้ว (20 หน้า/ไฟล์) ลง Google Drive
- * โครงสร้าง: แปลจนเมื่อย / {ชื่อเรื่อง} / {เลขตอน} / Part_01.webp
+ * โครงสร้าง: แปลจนเมื่อย / {ชื่อเรื่อง} / {เลขตอน} / 001.webp
  */
 function uploadChapterStitchedPart(payload) {
   try {
@@ -3368,7 +3368,7 @@ function uploadChapterStitchedPart(payload) {
     const chapter = payload.chapter || '第366话';
     const partIndex = payload.partIndex || 1;
     const totalParts = payload.totalParts || 1;
-    const fileName = payload.fileName || ('Part_' + String(partIndex).padStart(2, '0') + '.webp');
+    const fileName = payload.fileName || (String(partIndex).padStart(3, '0') + '.webp');
     const mimeType = payload.mimeType || 'image/webp';
 
     // 1. Get Destination Folder (แปลจนเมื่อย / {ชื่อไทย} / {chapter})

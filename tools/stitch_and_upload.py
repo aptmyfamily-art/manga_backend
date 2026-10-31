@@ -128,10 +128,10 @@ def main():
         part_urls = urls[start_idx:end_idx]
 
         if part_num < start_from_part:
-            print(f"   [ข้าม] Part {part_num:02d} ได้รับการอัปโหลดไปแล้ว")
+            print(f"   [ข้าม] หน้า {part_num:03d} ได้รับการอัปโหลดไปแล้ว")
             continue
 
-        print(f"\n--- กำลังทำ [{part_num}/{total_parts}] Part_{part_num:02d} (ชิ้นที่ {start_idx + 1} ถึง {end_idx}, รวม {slice_count} ชิ้น) ---")
+        print(f"\n--- กำลังทำ [{part_num}/{total_parts}] {part_num:03d} (ชิ้นที่ {start_idx + 1} ถึง {end_idx}, รวม {slice_count} ชิ้น) ---")
 
         processed_images = []
         total_height = 0
@@ -154,7 +154,7 @@ def main():
             total_height += pil_img.height
 
         if not processed_images:
-            print(f"   [เตือน] Part {part_num:02d} ไม่มีภาพที่โหลดสำเร็จ ข้าม Part นี้")
+            print(f"   [เตือน] หน้า {part_num:03d} ไม่มีภาพที่โหลดสำเร็จ ข้ามหน้านี้")
             continue
 
         print(f"   รวมความสูง: {total_height}px (ขนาด canvas: {standard_width}x{total_height})")
@@ -170,7 +170,7 @@ def main():
         use_jpeg = total_height > 16000
         ext = "jpg" if use_jpeg else "webp"
         mime_type = "image/jpeg" if use_jpeg else "image/webp"
-        part_file_name = f"Part_{part_num:02d}.{ext}"
+        part_file_name = f"{part_num:03d}.{ext}"
 
         img_buf = io.BytesIO()
         if use_jpeg:

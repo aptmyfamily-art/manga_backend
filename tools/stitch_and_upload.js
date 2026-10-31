@@ -105,7 +105,7 @@ async function main() {
     const startIdx = partIdx * PAGES_PER_PART;
     const endIdx = Math.min((partIdx + 1) * PAGES_PER_PART, allImages.length);
     const partNum = partIdx + 1;
-    const fileName = `Part_${String(partNum).padStart(2, '0')}.webp`;
+    const fileName = `${String(partNum).padStart(3, '0')}.webp`;
     console.log(`\n[${partNum}/${totalParts}] กำลังเย็บภาพหน้า ${startIdx + 1} - ${endIdx}...`);
 
     const chunkUrls = allImages.slice(startIdx, endIdx);

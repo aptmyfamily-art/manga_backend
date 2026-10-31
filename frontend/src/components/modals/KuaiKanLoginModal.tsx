@@ -682,7 +682,7 @@ export function KuaiKanLoginModal({
           totalParts,
           pageRange: partRange,
           percent: Math.round((partIdx / totalParts) * 100),
-          statusText: `กำลังโหลดและเย็บไฟล์ Part_${String(partNum).padStart(2, "0")}.webp (หน้าที่ ${partNum} จากทั้งหมด ${totalParts} หน้า, รวม ${sliceCount} ชิ้น)...`,
+          statusText: `กำลังโหลดและเย็บไฟล์ ${String(partNum).padStart(3, "0")}.webp (หน้าที่ ${partNum} จากทั้งหมด ${totalParts} หน้า, รวม ${sliceCount} ชิ้น)...`,
         })
 
         // 2.1 โหลดภาพใน Part นี้ (พร้อมระบบ Auto-Retry และ CDN Fallback)
@@ -711,7 +711,7 @@ export function KuaiKanLoginModal({
 
         // หากความสูงเกิน 16,000px ใช้ JPEG เพื่อไม่ให้ติดลิมิต 16,383px ของ WebP spec
         const useJpeg = totalHeight > 16000
-        const fileName = `Part_${String(partNum).padStart(2, "0")}.${useJpeg ? "jpg" : "webp"}`
+        const fileName = `${String(partNum).padStart(3, "0")}.${useJpeg ? "jpg" : "webp"}`
         const mimeType = useJpeg ? "image/jpeg" : "image/webp"
 
         // 2.3 สร้าง Canvas แล้ววาดต่อกันลงมา
