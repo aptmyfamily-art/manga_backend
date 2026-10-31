@@ -2261,8 +2261,21 @@ function getRawTrackerList() {
         obj[headers[c]] = val;
       }
       const manga = mangaMap[String(obj.mangaid)];
-      obj.currentChapter = manga ? (manga.lastchapter || '0') : '0';
+      const currentChap = manga ? (parseFloat(manga.lastchapter) || 0) : 0;
+      obj.currentChapter = currentChap > 0 ? String(currentChap) : (manga ? (manga.lastchapter || '0') : '0');
       if (!obj.manganame && manga) obj.manganame = manga.manganame;
+
+      // Ensure status is 100% accurate:
+      // If raw count <= current chapter in system, it CANNOT be "มีตอนใหม่"
+      const rawCount = parseFloat(obj.lastrawcount) || 0;
+      if (rawCount > 0 && currentChap > 0) {
+        if (rawCount <= currentChap) {
+          obj.status = 'เป็นปัจจุบัน';
+        } else {
+          const diff = rawCount - currentChap;
+          obj.status = 'มีตอนใหม่ (+' + diff + ' ตอน)';
+        }
+      }
       results.push(obj);
     }
     return results;
@@ -2619,12 +2632,35 @@ function checkAllRawTrackers(notifyTelegram = false) {
       const newCount = res.chapterCount;
       const manga = mangaMap[String(mangaId)];
       const systemChap = manga ? (parseFloat(manga.lastchapter) || 0) : 0;
-      const baseCount = oldCount > 0 ? oldCount : systemChap;
-      const isChanged = (oldText !== '' && oldText !== newText) || (baseCount > 0 && newCount > baseCount);
+      
+      let isChanged = false;
+      let diff = 0;
+
+      // Strict check: Only count as new chapter if newCount > systemChap
+      if (newCount > 0 && systemChap > 0) {
+        if (newCount > systemChap) {
+          isChanged = true;
+          diff = newCount - systemChap;
+        } else {
+          isChanged = false;
+          diff = 0;
+        }
+      } else if (newCount > 0 && systemChap === 0) {
+        if (oldCount > 0 && newCount > oldCount) {
+          isChanged = true;
+          diff = newCount - oldCount;
+        } else if (oldCount === 0) {
+          isChanged = true;
+          diff = newCount;
+        }
+      } else if (oldText !== '' && oldText !== newText) {
+        // Fallback only if no numeric chapter count could be parsed
+        isChanged = true;
+        diff = 1;
+      }
 
       let status = 'เป็นปัจจุบัน';
-      if (isChanged) {
-        const diff = baseCount > 0 && newCount > baseCount ? (newCount - baseCount) : 1;
+      if (isChanged && diff > 0) {
         status = 'มีตอนใหม่ (+' + diff + ' ตอน)';
         newUpdates.push({
           mangaName: mangaName,

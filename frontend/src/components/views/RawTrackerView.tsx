@@ -78,7 +78,7 @@ export function RawTrackerView({
   const queryClient = useQueryClient()
   const [search, setSearch] = React.useState("")
   const [statusFilter, setStatusFilter] = React.useState<
-    "all" | "urgent" | "new" | "current" | "error"
+    "all" | "urgent_new" | "new" | "current" | "error"
   >("all")
   const [viewMode, setViewMode] = React.useState<"cards" | "table">("cards")
   const [sortBy, setSortBy] = React.useState<
@@ -255,15 +255,31 @@ export function RawTrackerView({
         const oldScrapedNum = Number(item.lastrawcount || 0)
         const newScrapedNum = Number(res.chapterCount || 0)
 
-        const isChanged =
-          (item.lastrawtext && item.lastrawtext !== res.rawText) ||
-          (newScrapedNum > 0 && (oldScrapedNum > 0 ? newScrapedNum > oldScrapedNum : (currentNum > 0 && newScrapedNum > currentNum)))
+        // Strict calculation: A new chapter exists ONLY if newScrapedNum > currentNum
+        let isChanged = false
+        let diff = 0
+        if (newScrapedNum > 0 && currentNum > 0) {
+          if (newScrapedNum > currentNum) {
+            isChanged = true
+            diff = newScrapedNum - currentNum
+          } else {
+            isChanged = false
+            diff = 0
+          }
+        } else if (newScrapedNum > 0 && currentNum === 0) {
+          if (oldScrapedNum > 0 && newScrapedNum > oldScrapedNum) {
+            isChanged = true
+            diff = newScrapedNum - oldScrapedNum
+          } else if (oldScrapedNum === 0) {
+            isChanged = true
+            diff = newScrapedNum
+          }
+        } else if (item.lastrawtext && item.lastrawtext !== res.rawText) {
+          isChanged = true
+          diff = 1
+        }
 
-        const diff = Math.max(
-          1,
-          newScrapedNum - (oldScrapedNum > 0 ? oldScrapedNum : currentNum)
-        )
-        const newStatus = isChanged
+        const newStatus = isChanged && diff > 0
           ? `มีตอนใหม่ (+${diff} ตอน)`
           : "เป็นปัจจุบัน"
 
@@ -278,8 +294,8 @@ export function RawTrackerView({
           },
         })
 
-        if (isChanged) {
-          toast.success(`🎉 ${item.manganame}: ตรวจพบตอนใหม่! (${res.rawText})`)
+        if (isChanged && diff > 0) {
+          toast.success(`🎉 ${item.manganame}: ตรวจพบตอนใหม่! (+${diff} ตอน)`)
         } else {
           toast.info(`${item.manganame}: ตอนเป็นปัจจุบันแล้ว (${res.rawText})`)
         }
@@ -393,26 +409,46 @@ export function RawTrackerView({
             m.manganame.trim().toLowerCase() === item.manganame.trim().toLowerCase()
         )
       const isUrgent = isUrgentManga(manga)
-      const hasNew = String(item.status || "").includes("มีตอนใหม่")
-      const isError = String(item.status || "").includes("ตรวจสอบไม่ได้")
       const currentChap = parseFloat(String(item.currentChapter || "0")) || 0
       const rawChap = parseFloat(String(item.lastrawcount || "0")) || 0
-      const rawDiff = rawChap > currentChap ? rawChap - currentChap : 0
-      const diff = rawDiff > 0 ? rawDiff : hasNew ? 1 : 0
+
+      // Strict calculation: A manga has a new chapter ONLY if rawChap > currentChap
+      let hasNew = false
+      let diff = 0
+      if (rawChap > 0 && currentChap > 0) {
+        if (rawChap > currentChap) {
+          hasNew = true
+          diff = rawChap - currentChap
+        } else {
+          hasNew = false
+          diff = 0
+        }
+      } else if (rawChap > 0 && currentChap === 0) {
+        hasNew = true
+        diff = rawChap
+      } else {
+        hasNew = String(item.status || "").includes("มีตอนใหม่")
+        diff = hasNew ? 1 : 0
+      }
+
+      const isError = String(item.status || "").includes("ตรวจสอบไม่ได้")
+
+      // Red theme applies ONLY when: Has new chapter AND is urgent manga!
+      const isUrgentWithNew = hasNew && isUrgent
 
       // Priority score:
       // 1000+: เรื่องด่วน (สีแดง) ที่มีตอนใหม่
       // 500+: เรื่องปกติ ที่มีตอนใหม่
-      // 200: เรื่องด่วน (สีแดง) ที่เป็นปัจจุบัน
+      // 100: เรื่องด่วน ที่เป็นปัจจุบัน
       // 50: ตรวจไม่ได้
       // 0: เรื่องปกติ ที่เป็นปัจจุบัน
       let score = 0
-      if (isUrgent && hasNew) {
+      if (isUrgentWithNew) {
         score = 1000 + diff
       } else if (hasNew) {
         score = 500 + diff
       } else if (isUrgent) {
-        score = 200
+        score = 100
       } else if (isError) {
         score = 50
       } else {
@@ -421,6 +457,7 @@ export function RawTrackerView({
 
       return {
         isUrgentManga: isUrgent,
+        isUrgentWithNew,
         hasNew,
         isError,
         diff,
@@ -434,13 +471,13 @@ export function RawTrackerView({
   )
 
   // Statistics
-  const urgentMangaCount = React.useMemo(() => {
-    return trackers.filter((t) => getTrackerUrgency(t).isUrgentManga).length
+  const urgentWithNewCount = React.useMemo(() => {
+    return trackers.filter((t) => getTrackerUrgency(t).isUrgentWithNew).length
   }, [trackers, getTrackerUrgency])
 
-  const newUpdatesItems = trackers.filter((t) =>
-    String(t.status || "").includes("มีตอนใหม่")
-  )
+  const newUpdatesItems = React.useMemo(() => {
+    return trackers.filter((t) => getTrackerUrgency(t).hasNew)
+  }, [trackers, getTrackerUrgency])
   const newUpdatesCount = newUpdatesItems.length
 
   // Filtered trackers
@@ -457,17 +494,17 @@ export function RawTrackerView({
         }
       }
       // Status filter
-      if (statusFilter === "urgent") {
-        return getTrackerUrgency(t).isUrgentManga
+      if (statusFilter === "urgent_new") {
+        return getTrackerUrgency(t).isUrgentWithNew
       }
       if (statusFilter === "new") {
-        return String(t.status || "").includes("มีตอนใหม่")
+        return getTrackerUrgency(t).hasNew
       }
       if (statusFilter === "current") {
-        return String(t.status || "") === "เป็นปัจจุบัน"
+        return !getTrackerUrgency(t).hasNew && !getTrackerUrgency(t).isError
       }
       if (statusFilter === "error") {
-        return String(t.status || "").includes("ตรวจสอบไม่ได้")
+        return getTrackerUrgency(t).isError
       }
       return true
     })
@@ -658,29 +695,29 @@ export function RawTrackerView({
           </div>
         </Card>
 
-        {/* Urgent Manga (Red Theme) */}
+        {/* Urgent with New Chapter (Red Theme) */}
         <Card
           onClick={() =>
-            setStatusFilter(statusFilter === "urgent" ? "all" : "urgent")
+            setStatusFilter(statusFilter === "urgent_new" ? "all" : "urgent_new")
           }
           className={`p-4 transition-all cursor-pointer ${
-            urgentMangaCount > 0
+            urgentWithNewCount > 0
               ? "border-red-500/70 bg-gradient-to-br from-red-950/50 via-[#1c1116] to-[#111726] shadow-lg shadow-red-950/50 hover:border-red-400"
               : "bg-[#111726] border-[#26334d]"
           }`}
-          title="คลิกเพื่อกรองเฉพาะเรื่องด่วน (สีแดง)"
+          title="คลิกเพื่อกรองเฉพาะเรื่องด่วนที่มีตอนใหม่ (สีแดง)"
         >
           <div className="flex items-center justify-between">
             <span
               className={`text-xs font-semibold uppercase tracking-wider ${
-                urgentMangaCount > 0 ? "text-red-400 font-bold" : "text-slate-400"
+                urgentWithNewCount > 0 ? "text-red-400 font-bold" : "text-slate-400"
               }`}
             >
-              🔥 เรื่องด่วน
+              🔥 ด่วน & มีตอนใหม่
             </span>
             <div
               className={`rounded-lg p-2 ${
-                urgentMangaCount > 0
+                urgentWithNewCount > 0
                   ? "bg-red-500/20 text-red-400 animate-pulse"
                   : "bg-slate-800 text-slate-400"
               }`}
@@ -691,17 +728,17 @@ export function RawTrackerView({
           <div className="mt-2 flex items-baseline gap-2">
             <span
               className={`text-2xl font-bold ${
-                urgentMangaCount > 0 ? "text-red-400" : "text-slate-400"
+                urgentWithNewCount > 0 ? "text-red-400" : "text-slate-400"
               }`}
             >
-              {urgentMangaCount}
+              {urgentWithNewCount}
             </span>
             <span className="text-xs text-slate-400">เรื่อง</span>
           </div>
           <div className="mt-1 text-[11px] text-slate-400">
-            {urgentMangaCount > 0
-              ? "มังงะงานด่วนในระบบ (แสดงเป็นสีแดง)"
-              : "ไม่มีเรื่องในหมวดงานด่วน"}
+            {urgentWithNewCount > 0
+              ? "เรื่องด่วนที่ตรวจพบตอนใหม่แล้ว"
+              : "ไม่มีเรื่องด่วนที่มีตอนใหม่"}
           </div>
         </Card>
 
@@ -803,16 +840,16 @@ export function RawTrackerView({
                 ทั้งหมด ({trackers.length})
               </button>
               <button
-                onClick={() => setStatusFilter("urgent")}
+                onClick={() => setStatusFilter("urgent_new")}
                 className={`px-3 py-1.5 rounded-md transition-colors cursor-pointer flex items-center gap-1.5 ${
-                  statusFilter === "urgent"
+                  statusFilter === "urgent_new"
                     ? "bg-red-600 text-white font-bold shadow-md shadow-red-600/40"
                     : "text-red-400 hover:text-red-300 hover:bg-red-950/30"
                 }`}
-                title="กรองเฉพาะเรื่องด่วน (สีแดง)"
+                title="กรองเฉพาะเรื่องด่วนที่มีตอนใหม่ (สีแดง)"
               >
                 <Flame className="h-3.5 w-3.5 fill-current" />
-                เรื่องด่วน ({urgentMangaCount})
+                ด่วน & มีตอนใหม่ ({urgentWithNewCount})
               </button>
               <button
                 onClick={() => setStatusFilter("new")}
@@ -936,12 +973,12 @@ export function RawTrackerView({
               const domain = getDomainInfo(item.url)
               const isChecking = singleCheckingId === item.trackerid
 
-              // Card styling: If tracked manga is urgent (งานด่วน) -> ALL RED THEME!
+              // Card styling: If tracked manga is urgent AND has new chapter -> ALL RED THEME!
               let cardStyle =
                 "border-[#26334d] bg-[#111726] hover:border-slate-500 hover:shadow-lg"
               let borderGlow = ""
-              if (u.isUrgentManga) {
-                // RED STYLING for เรื่องด่วน (isurgent)
+              if (u.isUrgentWithNew) {
+                // RED STYLING only for เรื่องด่วนที่มีตอนใหม่
                 cardStyle =
                   "border-red-500 ring-2 ring-red-500/50 bg-gradient-to-b from-red-950/50 via-[#18111e] to-[#0c101d] shadow-xl shadow-red-950/60 hover:border-red-400"
                 borderGlow = "from-red-600 via-rose-500 to-red-600"
@@ -976,26 +1013,11 @@ export function RawTrackerView({
                       </span>
 
                       {/* Status / Urgency Badge */}
-                      {u.isUrgentManga ? (
-                        u.hasNew ? (
-                          <Badge className="bg-red-600 text-white font-bold px-2.5 py-0.5 shadow-md shadow-red-600/50 animate-pulse text-[11px] flex items-center gap-1">
-                            <Flame className="h-3 w-3 fill-current text-white" />
-                            เรื่องด่วน (+{u.diff} ตอน)
-                          </Badge>
-                        ) : u.isError ? (
-                          <Badge
-                            variant="destructive"
-                            className="text-[10px] px-1.5 py-0.5 flex items-center gap-1"
-                          >
-                            <AlertCircle className="h-3 w-3" />
-                            ตรวจไม่ได้
-                          </Badge>
-                        ) : (
-                          <Badge className="bg-red-900/60 text-red-200 border border-red-500/50 text-[10px] px-2 py-0.5 flex items-center gap-1">
-                            <Flame className="h-3 w-3 text-red-400 fill-current" />
-                            เรื่องด่วน (เป็นปัจจุบัน)
-                          </Badge>
-                        )
+                      {u.isUrgentWithNew ? (
+                        <Badge className="bg-red-600 text-white font-bold px-2.5 py-0.5 shadow-md shadow-red-600/50 animate-pulse text-[11px] flex items-center gap-1">
+                          <Flame className="h-3 w-3 fill-current text-white" />
+                          เรื่องด่วน (+{u.diff} ตอน)
+                        </Badge>
                       ) : u.hasNew ? (
                         <Badge className="bg-emerald-600 text-white font-bold px-2.5 py-0.5 shadow-md shadow-emerald-600/30 text-[11px] flex items-center gap-1">
                           <Sparkles className="h-3 w-3" />
@@ -1031,8 +1053,18 @@ export function RawTrackerView({
                           {item.manganame || "ไม่ระบุชื่อเรื่อง"}
                         </h3>
                         {u.isUrgentManga && (
-                          <span className="shrink-0 text-[10px] font-bold text-red-200 bg-red-600/30 border border-red-500/60 rounded px-1.5 py-0.5 flex items-center gap-0.5 shadow-xs">
-                            <Flame className="h-2.5 w-2.5 fill-current text-red-400" />
+                          <span
+                            className={`shrink-0 text-[10px] font-bold rounded px-1.5 py-0.5 flex items-center gap-0.5 shadow-xs ${
+                              u.isUrgentWithNew
+                                ? "text-red-200 bg-red-600/30 border border-red-500/60"
+                                : "text-slate-400 bg-slate-800 border border-slate-700"
+                            }`}
+                          >
+                            <Flame
+                              className={`h-2.5 w-2.5 fill-current ${
+                                u.isUrgentWithNew ? "text-red-400" : "text-slate-400"
+                              }`}
+                            />
                             เรื่องด่วน
                           </span>
                         )}
@@ -1095,10 +1127,10 @@ export function RawTrackerView({
                         </span>
                         <span
                           className={`font-mono text-xs font-bold ${
-                            u.hasNew
-                              ? u.isUrgentManga
-                                ? "text-red-400 animate-pulse font-extrabold"
-                                : "text-emerald-400 font-extrabold"
+                            u.isUrgentWithNew
+                              ? "text-red-400 animate-pulse font-extrabold"
+                              : u.hasNew
+                              ? "text-emerald-400 font-extrabold"
                               : "text-slate-500"
                           }`}
                         >
@@ -1127,7 +1159,7 @@ export function RawTrackerView({
                       size="sm"
                       onClick={() => handleCreateQueue(item)}
                       className={`h-8 flex-1 text-xs font-semibold ${
-                        u.isUrgentManga
+                        u.isUrgentWithNew
                           ? "bg-red-600 hover:bg-red-700 text-white shadow-md shadow-red-600/40"
                           : u.hasNew
                           ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-md shadow-emerald-600/30"
@@ -1248,7 +1280,7 @@ export function RawTrackerView({
                     const isChecking = singleCheckingId === item.trackerid
 
                     let rowBg = "hover:bg-[#151d2f]/50"
-                    if (u.isUrgentManga) {
+                    if (u.isUrgentWithNew) {
                       rowBg = "bg-red-950/25 hover:bg-red-950/35 border-l-4 border-l-red-500"
                     } else if (u.hasNew) {
                       rowBg = "bg-emerald-950/20 hover:bg-emerald-950/30 border-l-4 border-l-emerald-500"
@@ -1271,8 +1303,18 @@ export function RawTrackerView({
                             <div className="font-semibold text-sm text-slate-100 flex items-center gap-2">
                               <span>{item.manganame || "ไม่ระบุชื่อเรื่อง"}</span>
                               {u.isUrgentManga && (
-                                <span className="text-[10px] font-bold text-red-200 bg-red-600/30 border border-red-500/60 rounded px-1.5 py-0.5 flex items-center gap-0.5 shadow-xs">
-                                  <Flame className="h-2.5 w-2.5 fill-current text-red-400" />
+                                <span
+                                  className={`text-[10px] font-bold rounded px-1.5 py-0.5 flex items-center gap-0.5 shadow-xs ${
+                                    u.isUrgentWithNew
+                                      ? "text-red-200 bg-red-600/30 border border-red-500/60"
+                                      : "text-slate-400 bg-slate-800 border border-slate-700"
+                                  }`}
+                                >
+                                  <Flame
+                                    className={`h-2.5 w-2.5 fill-current ${
+                                      u.isUrgentWithNew ? "text-red-400" : "text-slate-400"
+                                    }`}
+                                  />
                                   เรื่องด่วน
                                 </span>
                               )}
@@ -1324,26 +1366,11 @@ export function RawTrackerView({
 
                         {/* Status */}
                         <TableCell className="text-center">
-                          {u.isUrgentManga ? (
-                            u.hasNew ? (
-                              <Badge className="bg-red-600 text-white font-bold px-2.5 py-1 shadow-md shadow-red-600/40 animate-pulse text-xs">
-                                <Flame className="h-3 w-3 mr-1 fill-current" />
-                                เรื่องด่วน (+{u.diff} ตอน)
-                              </Badge>
-                            ) : u.isError ? (
-                              <Badge
-                                variant="destructive"
-                                className="text-[11px] px-2 py-0.5"
-                              >
-                                <AlertCircle className="h-3 w-3 mr-1" />
-                                {item.status}
-                              </Badge>
-                            ) : (
-                              <Badge className="bg-red-900/60 text-red-200 border border-red-500/50 px-2.5 py-1 text-xs">
-                                <Flame className="h-3 w-3 mr-1 text-red-400 fill-current" />
-                                เรื่องด่วน (เป็นปัจจุบัน)
-                              </Badge>
-                            )
+                          {u.isUrgentWithNew ? (
+                            <Badge className="bg-red-600 text-white font-bold px-2.5 py-1 shadow-md shadow-red-600/40 animate-pulse text-xs">
+                              <Flame className="h-3 w-3 mr-1 fill-current" />
+                              เรื่องด่วน (+{u.diff} ตอน)
+                            </Badge>
                           ) : u.hasNew ? (
                             <Badge className="bg-emerald-600 text-white font-bold px-3 py-1 shadow-md shadow-emerald-600/30 text-xs">
                               <Sparkles className="h-3 w-3 mr-1" />
@@ -1383,7 +1410,7 @@ export function RawTrackerView({
                               size="sm"
                               variant="outline"
                               className={`h-8 text-xs font-semibold ${
-                                u.isUrgentManga
+                                u.isUrgentWithNew
                                   ? "bg-red-600 text-white hover:bg-red-700 border-red-500 shadow-md shadow-red-600/40"
                                   : u.hasNew
                                   ? "bg-emerald-600 text-white hover:bg-emerald-700 border-emerald-500 shadow-md shadow-emerald-600/30"
