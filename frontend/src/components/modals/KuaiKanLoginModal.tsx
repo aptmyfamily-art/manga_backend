@@ -86,8 +86,10 @@ export function KuaiKanLoginModal({
   // Main view tab: "sync" (Connect VIP) vs "test" (Chapter 366 Download)
   const [mainTab, setMainTab] = React.useState<"sync" | "test">("sync")
 
-  // Sync sub-method: "1click" | "qr" | "cookie"
-  const [syncMethod, setSyncMethod] = React.useState<"1click" | "qr" | "cookie">("1click")
+  // Sync sub-method: "1click" | "qr" | "cookie" | "html"
+  const [syncMethod, setSyncMethod] = React.useState<"1click" | "qr" | "cookie" | "html">("1click")
+  const [htmlInput, setHtmlInput] = React.useState("")
+  const [parsingHtml, setParsingHtml] = React.useState(false)
 
   // Session state
   const [loadingSession, setLoadingSession] = React.useState(false)
@@ -358,6 +360,65 @@ export function KuaiKanLoginModal({
       toast.error(err.message || "เกิดข้อผิดพลาดในการบันทึก Cookie")
     } finally {
       setSavingCookie(false)
+    }
+  }
+
+  // Handle parsing raw HTML syntax from <div class="comicDetails"> / <div class="imgList">
+  const handleParseHtml = async () => {
+    if (!htmlInput.trim()) {
+      toast.error("กรุณาวางโค้ด HTML ของตอน เช่น <div class=\"comicDetails\">... หรือ <div class=\"img-box\">...")
+      return
+    }
+
+    setParsingHtml(true)
+    try {
+      // 1. Regex อ่าน data-src ภายใน .img-box (format /image/c855368/ หรือ /image/c\d+/)
+      const regex = /data-src=["'](https?:\/\/[^"'\s]+kkmh\.com\/image\/c\d+\/[^"'\s]+)["']/gi
+      const urls: string[] = []
+      let match: RegExpExecArray | null
+      while ((match = regex.exec(htmlInput)) !== null) {
+        const u = match[1].replace(/&amp;/g, "&")
+        if (!urls.includes(u)) urls.push(u)
+      }
+
+      // 2. Fallback regex หากไม่มี data-src
+      if (urls.length === 0) {
+        const fallbackRegex = /https?:\/\/[^"'\s]*kkmh\.com\/image\/c\d+\/[^"'\s<>&]+/gi
+        let m2: RegExpExecArray | null
+        while ((m2 = fallbackRegex.exec(htmlInput)) !== null) {
+          const u = m2[0].replace(/&amp;/g, "&")
+          if (!urls.includes(u)) urls.push(u)
+        }
+      }
+
+      if (urls.length === 0) {
+        toast.error("ไม่พบลิงก์ภาพที่ตรงกับ format /image/c<comicId>/ ในโค้ด HTML ที่วาง")
+        return
+      }
+
+      toast.info(`✓ สกัดภาพจาก HTML สำเร็จ ${urls.length} ภาพ กำลังส่งบันทึกเข้าระบบ...`)
+
+      const saveRes = await callGasApi<any>("SAVE_KUAIKAN_AUTH", {
+        comicId: 855368,
+        title: "第366话 真真假假",
+        topicTitle: "我！天命大反派",
+        images: urls,
+      })
+
+      if (saveRes && saveRes.success) {
+        toast.success(`🎉 บันทึกภาพ ${urls.length} ภาพ เรียบร้อยแล้ว!`)
+        setHtmlInput("")
+        fetchSessionStatus()
+        setMainTab("test")
+        handleTestChapter()
+        if (onSuccess) onSuccess()
+      } else {
+        toast.error(saveRes?.error || "บันทึกภาพไม่สำเร็จ")
+      }
+    } catch (err: any) {
+      toast.error(err.message || "เกิดข้อผิดพลาดในการแกะโค้ด HTML")
+    } finally {
+      setParsingHtml(false)
     }
   }
 
@@ -736,6 +797,17 @@ export function KuaiKanLoginModal({
                 >
                   🔑 วาง Cookie
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setSyncMethod("html")}
+                  className={`flex-1 py-1 rounded transition-colors cursor-pointer ${
+                    syncMethod === "html"
+                      ? "bg-indigo-600 text-white font-semibold"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  📋 วาง HTML Syntax
+                </button>
               </div>
 
               {/* Sub-tab: 1-Click Bookmarklet */}
@@ -876,6 +948,40 @@ export function KuaiKanLoginModal({
                         <CheckCircle2 className="h-3 w-3 mr-1" />
                       )}
                       บันทึก
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {/* Sub-tab: Raw HTML Syntax Parser */}
+              {syncMethod === "html" && (
+                <div className="p-3 rounded-xl border border-indigo-500/25 bg-indigo-950/15 space-y-2">
+                  <div className="text-[11px] text-slate-300">
+                    ก๊อปปี้ Element <code>&lt;div class="imgList"&gt;...</code> หรือ <code>&lt;div class="img-box"&gt;...</code> จากหน้า Inspect Element มาวางที่นี่:
+                  </div>
+                  <Textarea
+                    rows={3}
+                    placeholder="วางโค้ด HTML ของตอน เช่น <div class=&quot;comicDetails&quot;>..."
+                    value={htmlInput}
+                    onChange={(e) => setHtmlInput(e.target.value)}
+                    className="font-mono text-[10px] bg-[#070b14] border-[#1e293b] text-slate-200 resize-none"
+                  />
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-slate-400">
+                      ระบบจะ Regex ดึงภาพ <code>/image/c855368/</code> ให้อัตโนมัติ
+                    </span>
+                    <Button
+                      size="sm"
+                      className="h-7 text-xs bg-emerald-600 hover:bg-emerald-500 text-white"
+                      onClick={handleParseHtml}
+                      disabled={parsingHtml}
+                    >
+                      {parsingHtml ? (
+                        <RefreshCw className="h-3 w-3 animate-spin mr-1" />
+                      ) : (
+                        <CheckCircle2 className="h-3 w-3 mr-1" />
+                      )}
+                      ดึงภาพจาก HTML
                     </Button>
                   </div>
                 </div>

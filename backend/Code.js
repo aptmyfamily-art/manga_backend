@@ -2934,6 +2934,52 @@ function normalizeKuaikanImageUrl(url) {
 }
 
 /**
+ * Regex แกะภาพจากโครงสร้าง HTML ของ KuaiKan:
+ * <div class="comicDetails"><div class="imgList"><div class="img-box"><img data-src="https://tn1.kkmh.com/image/c855368/..." ...>
+ */
+function extractComicImagesFromHtml(html, comicId) {
+  const urls = [];
+  if (!html || typeof html !== 'string') return urls;
+  const targetId = comicId || '855368';
+
+  // Pattern 1: data-src ภายใน .img-box (format /image/c855368/ หรือ /image/c\d+/)
+  const regex = /data-src=["'](https?:\/\/[^"'\s]*kkmh\.com\/image\/c(?:\d+)\/[^"'\s]+)["']/gi;
+  let match;
+  while ((match = regex.exec(html)) !== null) {
+    const u = match[1].replace(/&amp;/g, '&');
+    if (urls.indexOf(u) === -1) {
+      urls.push(u);
+    }
+  }
+
+  // Pattern 2: src ภายใน .img-box ที่เป็นภาพตอน (ไม่เอา data:image)
+  if (!urls.length) {
+    const srcRegex = /<div[^>]*class=["'][^"']*img-box[^"']*["'][^>]*>[\s\S]*?<img[^>]+src=["'](https?:\/\/[^"'\s]*kkmh\.com\/image\/c(?:\d+)\/[^"'\s]+)["']/gi;
+    let m2;
+    while ((m2 = srcRegex.exec(html)) !== null) {
+      const u = m2[1].replace(/&amp;/g, '&');
+      if (urls.indexOf(u) === -1) {
+        urls.push(u);
+      }
+    }
+  }
+
+  // Pattern 3: Fallback ค้นหา URL ที่มี /image/c<comicId>/ ทั้งหมดใน HTML
+  if (!urls.length) {
+    const rawRegex = new RegExp('https?:\\/\\/[^"\'\\s]*kkmh\\.com\\/image\\/c' + targetId + '\\/[^"\'\\s<>&]+', 'gi');
+    let m3;
+    while ((m3 = rawRegex.exec(html)) !== null) {
+      const u = m3[0].replace(/&amp;/g, '&');
+      if (urls.indexOf(u) === -1) {
+        urls.push(u);
+      }
+    }
+  }
+
+  return urls.map(normalizeKuaikanImageUrl);
+}
+
+/**
  * บันทึก Auth KuaiKan (จาก WeChat Code หรือกรอก Cookie ตรง หรือรับรายชื่อภาพจากหน้าเว็บ)
  */
 function saveKuaikanAuth(payload) {
@@ -2973,6 +3019,14 @@ function saveKuaikanAuth(payload) {
     cookieHeader = allCookieParts.join('; ');
   }
 
+  // หากมีการส่ง raw HTML จากแท็ก <div class="comicDetails"> หรือ <div class="imgList"> มา ให้ regex ดึงภาพอัตโนมัติ
+  if (payload.html && typeof payload.html === 'string') {
+    const extracted = extractComicImagesFromHtml(payload.html, payload.comicId);
+    if (extracted.length > 0) {
+      payload.images = extracted;
+    }
+  }
+
   if (!cookieHeader && (!payload.images || !payload.images.length)) {
     return { error: 'ไม่มี Cookie หรือ Session สำหรับบันทึก' };
   }
@@ -2980,7 +3034,15 @@ function saveKuaikanAuth(payload) {
   // ทดสอบความถูกต้องและสิทธิ์ VIP (หากส่งรายชื่อภาพจากเบราว์เซอร์มาด้วย ใช้รายชื่อภาพนั้นได้เลย)
   let testRes = null;
   if (payload.images && Array.isArray(payload.images) && payload.images.length > 0) {
-    const cleanImgs = payload.images.map(normalizeKuaikanImageUrl).filter(Boolean);
+    // กรองเข้มงวด: ภาพตอนแท้จริงต้องมี /image/c<comicId>/ เท่านั้น (ตัดภาพโฆษณา/ภาพแนะนำออก 100%)
+    const comicImgRegex = /\/image\/c\d+\//i;
+    const cleanImgs = payload.images
+      .filter(function(u) {
+        return typeof u === 'string' && (comicImgRegex.test(u) || u.indexOf('/c' + (payload.comicId || 855368)) !== -1);
+      })
+      .map(normalizeKuaikanImageUrl)
+      .filter(Boolean);
+
     testRes = {
       success: true,
       comicId: payload.comicId || 855368,
@@ -2989,7 +3051,7 @@ function saveKuaikanAuth(payload) {
       imagesCount: cleanImgs.length,
       isPay: true,
       isLocked: false,
-      isVipUnlocked: true,
+      isVipUnlocked: cleanImgs.length > 0,
       isLogin: true,
       sampleImages: cleanImgs.slice(0, 3),
       allImages: cleanImgs
@@ -3042,13 +3104,19 @@ function testKuaikanLatestChapter(comicId, overrideCookie) {
     let isPay = false;
     let isLogin = false;
 
-    // Priority 0: Check if session has stored allImages from client sync
+    // Priority 0: Check if session has stored allImages from client sync (filter strictly for real comic images with /image/c)
     if (session && session.test && session.test.allImages && session.test.allImages.length > 1 && (!comicId || comicId === session.test.comicId)) {
-      rawImages = session.test.allImages;
-      title = session.test.title || '';
-      topicTitle = session.test.topicTitle || '';
-      isPay = Boolean(session.test.isPay);
-      isLogin = Boolean(session.test.isLogin);
+      const validComicImgs = session.test.allImages.filter(function(img) {
+        const u = typeof img === 'string' ? img : (img.url1280 || img.url);
+        return u && (u.indexOf('/image/c') !== -1 || u.indexOf('/c' + targetComicId) !== -1);
+      });
+      if (validComicImgs.length > 0) {
+        rawImages = validComicImgs;
+        title = session.test.title || '';
+        topicTitle = session.test.topicTitle || '';
+        isPay = Boolean(session.test.isPay);
+        isLogin = Boolean(session.test.isLogin);
+      }
     }
 
     // 1. Try mobile/app API first if no cached images
@@ -3094,22 +3162,21 @@ function testKuaikanLatestChapter(comicId, overrideCookie) {
         });
         const webHtml = webRes.getContentText();
         
-        const imgRegex = /https:\/\/[^"'\s]+(?:kkmh\.com)[^"'\s]+(?:\.webp|\.jpg|\.png)/g;
-        const webImgMatches = webHtml.match(imgRegex) || [];
-        const filteredWebImgs = webImgMatches.filter(function(u) {
-          return u.indexOf('updatenotice') === -1 && u.indexOf('avatar') === -1 && u.indexOf('logo') === -1 && u.indexOf('icon') === -1;
-        });
-
-        if (filteredWebImgs.length > 1) {
-          rawImages = [];
-          filteredWebImgs.forEach(function(item) {
-            if (rawImages.indexOf(item) === -1) rawImages.push(item);
-          });
+        // ใช้ฟังก์ชัน extractComicImagesFromHtml แกะภาพเฉพาะจาก .img-box / .imgList format /image/c855368/
+        const parsedImgs = extractComicImagesFromHtml(webHtml, targetComicId);
+        if (parsedImgs.length > 0) {
+          rawImages = parsedImgs;
         }
       } catch (webErr) {
         console.error('Web viewer fallback error:', webErr);
       }
     }
+
+    // Filter rawImages to ensure only real chapter comic images are kept (contains /image/c)
+    rawImages = rawImages.filter(function(img) {
+      const u = typeof img === 'string' ? img : (img.url1280 || img.url);
+      return u && (u.indexOf('/image/c') !== -1 || u.indexOf('/c' + targetComicId) !== -1);
+    });
 
     const imagesCount = rawImages.length;
     const isLocked = imagesCount <= 1;
