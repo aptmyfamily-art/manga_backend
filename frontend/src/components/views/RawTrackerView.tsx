@@ -437,7 +437,7 @@ export function RawTrackerView({
                 )}
               </h2>
               <p className="text-xs text-slate-400">
-                ระบบ Web Scraping ตรวจสอบหน้าเว็บจีน/เกาหลีอัตโนมัติทุก 1 ชม. (快看: 共377个内容 / QQ: 最新话：[第...话...]日期)
+                ระบบ Web Scraping ตรวจสอบหน้าเว็บอัตโนมัติทุก 1 ชม. (快看: 共377个内容 / QQ: 最新话 / ThunderScans: New Chapter)
               </p>
             </div>
           </div>
@@ -982,7 +982,14 @@ export function RawTrackerView({
                   onClick={() => setFormPattern("")}
                   className="text-indigo-400 hover:underline cursor-pointer"
                 >
-                  [ac.qq: 最新话：[第...话...]日期 (อัตโนมัติ)]
+                  [ac.qq: 最新话 (อัตโนมัติ)]
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFormPattern("")}
+                  className="text-emerald-400 hover:underline cursor-pointer"
+                >
+                  [ThunderScans: New Chapter (อัตโนมัติ)]
                 </button>
                 <button
                   type="button"

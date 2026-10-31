@@ -2354,7 +2354,23 @@ function scrapeRawUrl(url, pattern) {
       }
     }
 
-    // 3. Kuaikanmanhua default pattern: 共377个内容
+    // 3. EN-THUNDERSCANS (en-thunderscans.com) pattern: New Chapter -> Chapter 73
+    // Matches: <span>New Chapter</span> ... <span class="epcur epcurlast">Chapter 73</span>
+    if (!matchedText && (cleanUrl.indexOf('thunderscans') !== -1 || html.indexOf('New Chapter') !== -1)) {
+      const thunderMatch = html.match(/(?:New\s*Chapter|Latest\s*Chapter)[\s\S]{1,250}?((?:Chapter|Ch\.)\s*(\d+(?:\.\d+)?))/i);
+      if (thunderMatch) {
+        matchedText = 'New Chapter: ' + thunderMatch[1].trim();
+        chapterCount = parseFloat(thunderMatch[2]);
+      } else {
+        const epcurMatch = html.match(/class="[^"]*epcurlast[^"]*"[^>]*>\s*((?:Chapter|Ch\.)\s*(\d+(?:\.\d+)?))/i);
+        if (epcurMatch) {
+          matchedText = 'New Chapter: ' + epcurMatch[1].trim();
+          chapterCount = parseFloat(epcurMatch[2]);
+        }
+      }
+    }
+
+    // 4. Kuaikanmanhua default pattern: 共377个内容
     if (!matchedText) {
       const matchKuaikan = html.match(/共\s*(\d+)\s*个内容/);
       if (matchKuaikan) {
@@ -2363,7 +2379,7 @@ function scrapeRawUrl(url, pattern) {
       }
     }
 
-    // 4. QQ Comic fallback patterns: 第...话 or 更新至...话
+    // 5. QQ Comic fallback patterns: 第...话 or 更新至...话
     if (!matchedText) {
       const matchQq = html.match(/更新至\s*(\d+)\s*话/) || html.match(/共\s*(\d+)\s*话/);
       if (matchQq) {
@@ -2385,7 +2401,7 @@ function scrapeRawUrl(url, pattern) {
       }
     }
 
-    // 5. Other common patterns
+    // 6. Other common patterns
     if (!matchedText) {
       const generic = html.match(/(?:更新至|連載至|连载至|Chapter|Ch\.)\s*(\d+)/i);
       if (generic) {
