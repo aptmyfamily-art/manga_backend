@@ -12,7 +12,7 @@ from PIL import Image
 GAS_URL = "https://script.google.com/macros/s/AKfycbzG1H1eBoTsF7Omfso8v23N6HidWXU4kS-yyf0xDunb2BoZgPiUYPIOO2vMLSvYWwHsnw/exec"
 PASSCODE = "10211032"
 COMIC_ID = 855368
-MANGA_NAME = "我！天命大反派"
+MANGA_NAME = "ข้าคือจอมวายร้ายผู้ยิ่งใหญ่"
 CHAPTER_NAME = "第366话"
 TARGET_TOTAL_PAGES = 20
 
@@ -56,9 +56,10 @@ def main():
         return
 
     data = res["data"]
+    manga_thai_name = data.get("thaiTitle") or data.get("mangaName") or MANGA_NAME
     urls = data.get("allImages") or data.get("sampleImages") or []
     total_images = len(urls)
-    print(f"✓ พบทั้งหมด {total_images} ชิ้นภาพ (เรื่อง: {data.get('topicTitle')}, ตอน: {data.get('title')})")
+    print(f"✓ พบทั้งหมด {total_images} ชิ้นภาพ (เรื่องไทย: {manga_thai_name}, ตอน: {data.get('title')})")
 
     if not urls:
         print("No images found.")
@@ -140,7 +141,7 @@ def main():
         print(f"   กำลังอัปโหลด {part_file_name} ขึ้น Google Drive...")
 
         upload_res = call_gas("UPLOAD_CHAPTER_STITCHED_PART", {
-            "mangaName": MANGA_NAME,
+            "mangaName": manga_thai_name,
             "chapter": CHAPTER_NAME,
             "partIndex": part_num,
             "totalParts": total_parts,
@@ -149,7 +150,7 @@ def main():
             "base64Data": data_url,
             "isLastPart": is_last,
             "clearFolder": (part_num == 1),
-            "mangaId": "1"
+            "mangaId": str(data.get("mangaId") or "4")
         })
 
         if upload_res.get("status") == "success":
