@@ -14,3 +14,8 @@ This repository follows the **Hierarchical Multi-Agent Architecture** establishe
 3. **Mandatory Sub-Agent Rule**:
    - Always spawn subagents to tackle tasks in parallel.
    - When new features, connectors, or modules are requested, dynamically spin up a new dedicated Team to execute concurrently.
+
+4. **Main Lead Strict Non-Execution Rule**:
+   - The Main Lead (Parent Agent) MUST NOT execute dev code, run build/deploy commands, or scrape data directly.
+   - The Main Lead MUST NOT poll subagent logs via shell commands (rely strictly on Antigravity's reactive wakeup and messages).
+   - All technical tasks belong strictly to Sub-Agents. Main Lead handles orchestration and user reporting only.

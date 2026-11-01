@@ -3373,30 +3373,35 @@ function saveKuaikanAuth(payload) {
   // ทดสอบความถูกต้องและสิทธิ์ VIP (หากส่งรายชื่อภาพจากเบราว์เซอร์มาด้วย ใช้รายชื่อภาพนั้นได้เลย)
   let testRes = null;
   if (payload.images && Array.isArray(payload.images) && payload.images.length > 0) {
+    const targetCid = String(payload.comicId || '').trim();
     // กรองเข้มงวด: ภาพตอนแท้จริงต้องมี /image/c<comicId>/ และต้องไม่เป็นภาพโฆษณา/ภาพแนะนำ (w640)
-    const comicImgRegex = /\/image\/c\d+\//i;
     const cleanImgs = payload.images
       .filter(function(u) {
-        return typeof u === 'string' && (comicImgRegex.test(u) || u.indexOf('/c' + (payload.comicId || 855368)) !== -1) && u.indexOf('w640') === -1;
+        if (!u || typeof u !== 'string') return false;
+        if (u.indexOf('w640') !== -1) return false;
+        if (targetCid) {
+          return u.indexOf('/image/c' + targetCid + '/') !== -1 || u.indexOf('/c' + targetCid + '/') !== -1;
+        }
+        return /\/image\/c\d+\//i.test(u);
       })
       .map(normalizeKuaikanImageUrl)
       .filter(Boolean);
 
     testRes = {
-      success: true,
-      comicId: payload.comicId || 855368,
-      title: payload.title || '第366话 真真假假',
-      topicTitle: payload.topicTitle || '我！天命大反派',
+      success: cleanImgs.length > 0,
+      comicId: payload.comicId || null,
+      title: payload.title || '',
+      topicTitle: payload.topicTitle || '',
       imagesCount: cleanImgs.length,
       isPay: true,
-      isLocked: false,
-      isVipUnlocked: cleanImgs.length > 0,
+      isLocked: cleanImgs.length <= 1,
+      isVipUnlocked: cleanImgs.length > 1,
       isLogin: true,
       sampleImages: cleanImgs.slice(0, 3),
       allImages: cleanImgs
     };
   } else {
-    testRes = testKuaikanLatestChapter(null, cookieHeader);
+    testRes = testKuaikanLatestChapter(payload.comicId || null, cookieHeader);
   }
 
   const sessionData = {
@@ -3426,7 +3431,8 @@ function saveKuaikanAuth(payload) {
  */
 function testKuaikanLatestChapter(comicId, overrideCookie) {
   try {
-    const targetComicId = comicId || 855368; // Chapter 366
+    const isExplicitId = Boolean(comicId);
+    const targetComicId = isExplicitId ? String(comicId).trim() : null;
     let cookie = overrideCookie;
     const session = getKuaikanSessionData();
     if (!cookie) {
@@ -3443,9 +3449,12 @@ function testKuaikanLatestChapter(comicId, overrideCookie) {
     let isPay = false;
     let isLogin = false;
 
-    // 1. ส่ง Web Scraping ไปดึง HTML ของตอนจาก KuaiKan โดยตรง (ใช้ Cookie VIP ที่ล็อกอินไว้)
+    // ถ้าไม่มี comicId ส่งมา (เช่น กดทดสอบ connection จากหน้าเว็บ) ให้ใช้ targetComicId เป็น 855368 เพื่อทดสอบ
+    const fetchComicId = targetComicId || '855368';
+
+    // 1. ส่ง Web Scraping ไปดึง HTML ของตอนจาก KuaiKan โดยตรง (ใช้ Cookie ที่ล็อกอินไว้)
     try {
-      const webUrl = 'https://www.kuaikanmanhua.com/webs/comic-next/' + targetComicId;
+      const webUrl = 'https://www.kuaikanmanhua.com/webs/comic-next/' + fetchComicId;
       const webRes = UrlFetchApp.fetch(webUrl, {
         method: 'get',
         muteHttpExceptions: true,
@@ -3467,7 +3476,7 @@ function testKuaikanLatestChapter(comicId, overrideCookie) {
       }
 
       // สกัดภาพตอนแท้ทั้งหมดผ่าน extractComicImagesFromHtml
-      const scrapedImgs = extractComicImagesFromHtml(webHtml, targetComicId);
+      const scrapedImgs = extractComicImagesFromHtml(webHtml, fetchComicId);
       if (scrapedImgs && scrapedImgs.length > 0) {
         rawImages = scrapedImgs;
         isLogin = true;
@@ -3476,9 +3485,9 @@ function testKuaikanLatestChapter(comicId, overrideCookie) {
       console.error('Direct web scraping error:', scrapeErr);
     }
 
-    // 2. หาก Web Scraping ได้ภาพน้อยหรือไม่สำเร็จ ให้ Fallback ไปที่ API หรือ Session ที่บันทึกไว้
+    // 2. หาก Web Scraping ได้ภาพน้อยหรือไม่สำเร็จ ให้ Fallback ไปที่ API
     if (rawImages.length <= 1) {
-      const url = 'https://api.kkmh.com/v2/comic/' + targetComicId + '?is_preview=0';
+      const url = 'https://api.kkmh.com/v2/comic/' + fetchComicId + '?is_preview=0';
       try {
         const res = UrlFetchApp.fetch(url, {
           method: 'get',
@@ -3504,21 +3513,51 @@ function testKuaikanLatestChapter(comicId, overrideCookie) {
       }
     }
 
-    // 3. Fallback สุดท้าย: แคชจาก session
-    if (rawImages.length <= 1 && session && session.test && session.test.allImages && session.test.allImages.length > 1) {
+    // 3. Fallback: ถ้าเป็นการทดสอบทั่วไปโดยไม่ระบุ comicId เท่านั้น ถึงจะใช้ session.test.allImages ที่ตรงกับ fetchComicId
+    if (!isExplicitId && rawImages.length <= 1 && session && session.test && session.test.allImages && session.test.allImages.length > 1 && String(session.test.comicId) === fetchComicId) {
       rawImages = session.test.allImages;
       if (!title) title = session.test.title || '';
       if (!topicTitle) topicTitle = session.test.topicTitle || '';
     }
 
-    // Filter rawImages to ensure only real chapter comic images are kept (contains /image/c, no w640 ads)
+    // 4. กรองภาพ rawImages ให้มีเฉพาะภาพของ fetchComicId เท่านั้น (มี /image/c<fetchComicId>/ และไม่มี w640)
     rawImages = rawImages.filter(function(img) {
-      const u = typeof img === 'string' ? img : (img.url1280 || img.url);
-      return u && (u.indexOf('/image/c') !== -1 || u.indexOf('/c' + targetComicId) !== -1) && u.indexOf('w640') === -1;
+      const u = typeof img === 'string' ? img : (img.url1280 || img.url || img.rawUrl);
+      if (!u || u.indexOf('w640') !== -1) return false;
+      return u.indexOf('/image/c' + fetchComicId + '/') !== -1 || u.indexOf('/c' + fetchComicId + '/') !== -1;
     });
 
     const imagesCount = rawImages.length;
     const isLocked = imagesCount <= 1;
+
+    // หาข้อมูลมังงะภาษาไทย
+    const thaiInfo = getThaiMangaInfo(topicTitle || fetchComicId);
+    const thaiMangaName = (thaiInfo && thaiInfo.manganame) ? thaiInfo.manganame : (topicTitle || ('Comic_' + fetchComicId));
+    const mangaId = (thaiInfo && thaiInfo.mangaid) ? thaiInfo.mangaid : null;
+
+    // หากระบุ comicId เจาะจง แล้วติดล็อคหรือไม่มีภาพ ให้คืนค่า error ทันที ไม่ให้ไปเย็บภาพผิดเรื่องเด็ดขาด
+    if (isExplicitId && isLocked) {
+      return {
+        status: 'error',
+        success: false,
+        error: 'Cannot fetch images for ComicID ' + targetComicId + ' (ตอนอาจติด VIP Lock หรือยังไม่เปิดให้อ่าน)',
+        comicId: targetComicId,
+        mangaId: mangaId,
+        mangaName: thaiMangaName,
+        thaiTitle: thaiMangaName,
+        title: title || '',
+        topicTitle: topicTitle || '',
+        imagesCount: 0,
+        isPay: isPay,
+        isLocked: true,
+        isVipUnlocked: false,
+        isLogin: isLogin,
+        sampleImages: [],
+        allImages: [],
+        imageDetails: []
+      };
+    }
+
     const sampleImages = rawImages.slice(0, 3).map(function(img) {
       const raw = typeof img === 'string' ? img : (img.rawUrl || img.url1280 || img.url);
       return normalizeKuaikanImageUrl(raw);
@@ -3537,18 +3576,15 @@ function testKuaikanLatestChapter(comicId, overrideCookie) {
       };
     });
 
-    const thaiInfo = getThaiMangaInfo(topicTitle || targetComicId);
-    const thaiMangaName = thaiInfo.manganame || 'ข้าคือจอมวายร้ายผู้ยิ่งใหญ่';
-    const mangaId = thaiInfo.mangaid || 4;
-
     return {
+      status: 'success',
       success: true,
-      comicId: targetComicId,
+      comicId: fetchComicId,
       mangaId: mangaId,
       mangaName: thaiMangaName,
       thaiTitle: thaiMangaName,
-      title: title || (session && session.test && session.test.title) || '第366话',
-      topicTitle: topicTitle || (session && session.test && session.test.topicTitle) || '我！天命大反派',
+      title: title || '',
+      topicTitle: topicTitle || '',
       imagesCount: imagesCount,
       isPay: isPay,
       isLocked: isLocked,
@@ -3560,7 +3596,7 @@ function testKuaikanLatestChapter(comicId, overrideCookie) {
     };
   } catch (e) {
     console.error('testKuaikanLatestChapter error:', e);
-    return { success: false, error: e.toString() };
+    return { status: 'error', success: false, error: e.toString() };
   }
 }
 
@@ -3576,7 +3612,7 @@ const KUAIKAN_DRIVE_ROOT_FOLDER_ID = '1hA_5XjT1gLnzrAOFpT-COVfIbuSfVG6_';
  */
 function getThaiMangaInfo(identifier) {
   if (!identifier) {
-    return { mangaid: 4, manganame: 'ข้าคือจอมวายร้ายผู้ยิ่งใหญ่', originalname: '我！天命大反派' };
+    return { mangaid: null, manganame: '', originalname: '' };
   }
   try {
     const list = getMangaList();
@@ -3626,7 +3662,7 @@ function getThaiMangaInfo(identifier) {
     console.error('getThaiMangaInfo error:', e);
   }
 
-  return { mangaid: 4, manganame: 'ข้าคือจอมวายร้ายผู้ยิ่งใหญ่', originalname: String(identifier).trim() };
+  return { mangaid: null, manganame: String(identifier).trim(), originalname: String(identifier).trim() };
 }
 
 /**
@@ -3647,9 +3683,9 @@ function getOrCreateChapterFolder(mangaName, chapterName) {
     }
   }
 
-  // 1. ซับโฟลเดอร์ชื่อเรื่องภาษาไทยจากฐานข้อมูล (เช่น ข้าคือจอมวายร้ายผู้ยิ่งใหญ่)
+  // 1. ซับโฟลเดอร์ชื่อเรื่องภาษาไทยจากฐานข้อมูล
   const thaiInfo = getThaiMangaInfo(mangaName);
-  const cleanMangaName = (thaiInfo.manganame || mangaName || 'ข้าคือจอมวายร้ายผู้ยิ่งใหญ่').trim();
+  const cleanMangaName = (thaiInfo.manganame || mangaName || 'Unknown_Manga').trim();
 
   let mangaFolder;
   const mangaFolders = rootFolder.getFoldersByName(cleanMangaName);
@@ -3660,7 +3696,7 @@ function getOrCreateChapterFolder(mangaName, chapterName) {
   }
 
   // 2. ซับโฟลเดอร์เลขตอน (เช่น 第366话)
-  let cleanChapterName = (chapterName || '第366话').trim();
+  let cleanChapterName = (chapterName || 'Chapter_Unknown').trim();
   if (!cleanChapterName.startsWith('第') && cleanChapterName.match(/^\d+$/)) {
     cleanChapterName = '第' + cleanChapterName + '话';
   }
@@ -3685,10 +3721,10 @@ function uploadChapterStitchedPart(payload) {
       return { error: 'ไม่มีข้อมูล base64Data' };
     }
 
-    const thaiInfo = getThaiMangaInfo(payload.mangaId || payload.mangaName || '我！天命大反派');
-    const thaiMangaName = thaiInfo.manganame || 'ข้าคือจอมวายร้ายผู้ยิ่งใหญ่';
-    const mangaId = payload.mangaId || thaiInfo.mangaid || 4;
-    const chapter = payload.chapter || '第366话';
+    const thaiInfo = getThaiMangaInfo(payload.mangaId || payload.mangaName || '');
+    const thaiMangaName = thaiInfo.manganame || payload.mangaName || 'Unknown_Manga';
+    const mangaId = payload.mangaId || thaiInfo.mangaid || '';
+    const chapter = payload.chapter || 'Chapter_Unknown';
     const partIndex = payload.partIndex || 1;
     const totalParts = payload.totalParts || 1;
     const fileName = payload.fileName || (String(partIndex).padStart(3, '0') + '.webp');
@@ -3734,7 +3770,7 @@ function uploadChapterStitchedPart(payload) {
       try {
         queueRes = addQueue({
           mangaid: payload.mangaId,
-          chapter: chapter.replace(/[^\d.]/g, '') || '366',
+          chapter: chapter.replace(/[^\d.]/g, '') || '0',
           uploadstatus: 'Done',
           worklink: folderUrl,
           note: 'KuaiKan VIP Concat รวมเป็น ' + totalParts + ' หน้า ลง แปลจนเมื่อย'

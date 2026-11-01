@@ -140,13 +140,30 @@ def process_single_chapter(task):
         return False
 
     data = res["data"]
+    if data.get("isLocked") or not data.get("success", True):
+        print(f"❌ ตอนติดล็อคหรือดึงภาพไม่ได้ (ComicID: {comic_id}): {data.get('error') or 'isLocked'}")
+        return False
+
     urls = data.get("imageDetails") or data.get("allImages") or data.get("sampleImages") or []
     total_images = len(urls)
     thai_name = data.get("thaiTitle") or data.get("mangaName") or manga_name
 
+    # ตรวจสอบความถูกต้องว่าภาพเป็นของ comic_id นี้จริงๆ ป้องกันการเย็บผิดเรื่อง
+    cid_str = f"c{comic_id}"
+    valid_urls = []
+    for item in urls:
+        u = item if isinstance(item, str) else (item.get("rawUrl") or item.get("url") or "")
+        if cid_str in u:
+            valid_urls.append(item)
+
+    if len(valid_urls) < total_images:
+        print(f"⚠️ ตรวจพบภาพที่ไม่ตรงกับ ComicID {comic_id} ({len(valid_urls)}/{total_images}) คัดแยกออก")
+        urls = valid_urls
+        total_images = len(urls)
+
     print(f"✓ พบทั้งหมด {total_images} ชิ้นภาพ (เรื่องไทย: {thai_name}, ตอน: {data.get('title')})")
-    if not urls:
-        print("❌ ไม่พบรูปภาพในตอนนี้ ข้าม")
+    if total_images <= 1:
+        print(f"❌ ไม่พบรูปภาพที่สมบูรณ์สำหรับ ComicID {comic_id} ข้าม")
         return False
 
     # 2. วัดขนาดความกว้างมาตรฐานจากหน้าย่อยที่ 15 (Index 14) ของเรื่อง/ตอนนั้นๆ เสมอ (ไม่ล็อค 1280px)
@@ -296,9 +313,12 @@ def main():
         if success:
             completed_count += 1
 
-        # จบ 1 ตอน ให้พัก 5 นาที (ถ้ายังมีตอนถัดไป)
+        # จบ 1 ตอน ให้พัก 5 นาที (ถ้าสำเร็จและยังมีตอนถัดไป)
         if idx < total_tasks - 1:
-            countdown_sleep(COOLDOWN_SECONDS)
+            if success:
+                countdown_sleep(COOLDOWN_SECONDS)
+            else:
+                print("   ⏩ ข้ามการพักสำหรับตอนที่ไม่สำเร็จ เริ่มตอนถัดไปทันที...")
 
     print("\n=================================================================")
     print(f"🏁 ทำงานเสร็จสิ้นทั้งหมด {completed_count}/{total_tasks} ตอนเรียบร้อยแล้ว!")
