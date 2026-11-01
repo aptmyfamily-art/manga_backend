@@ -321,7 +321,11 @@ function doPost(e) {
         result = clearKuaikanAuth();
         break;
       case 'TEST_KUAIKAN_CHAPTER':
-        result = testKuaikanLatestChapter(payload ? payload.comicId : null);
+        result = testKuaikanLatestChapter(payload ? payload.comicId : null, null, payload);
+        break;
+      case 'PURCHASE_KUAIKAN_CHAPTER':
+      case 'BUY_KUAIKAN_CHAPTER':
+        result = purchaseKuaikanChapter(payload);
         break;
       case 'DOWNLOAD_KUAIKAN_CHAPTER':
         result = downloadKuaikanChapterToDrive(payload);
@@ -3026,6 +3030,7 @@ function getRawTrackerPendingChapters(targetTrackerId) {
                   trackerId: item.trackerid,
                   mangaId: item.mangaid,
                   mangaName: item.manganame || (manga ? manga.manganame : ''),
+                  topicId: topicId,
                   comicId: chap.comicId,
                   chapterNum: chap.chapterNum,
                   chapterTitle: chap.chapterTitle,
@@ -3219,32 +3224,318 @@ function checkKuaikanWalletStatus() {
   }
 
   try {
-    const userUrl = 'https://www.kuaikanmanhua.com/v1/users/me';
-    const res = UrlFetchApp.fetch(userUrl, {
+    // 1. ตรวจสอบยอดเหรียญ KK Coins และยอดเหรียญคงเหลือจาก API จริงของ KuaiKan
+    const rechargeUrl = 'https://www.kuaikanmanhua.com/v2/kb/recharge_good/pc/h5_list';
+    const rechargeRes = UrlFetchApp.fetch(rechargeUrl, {
       method: 'get',
       muteHttpExceptions: true,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Referer': 'https://www.kuaikanmanhua.com/',
+        'Referer': 'https://www.kuaikanmanhua.com/webs/buykkb',
         'Cookie': session.cookie
       }
     });
 
-    if (res.getResponseCode() === 200) {
-      const data = JSON.parse(res.getContentText());
-      if (data && data.data) {
-        session.user = data.data;
-        if (data.data.wallet || data.data.kk_currency !== undefined) {
-          session.coinBalance = data.data.kk_currency !== undefined ? data.data.kk_currency : (data.data.wallet ? data.data.wallet.balance : session.coinBalance);
-        }
-        PropertiesService.getScriptProperties().setProperty(KUAIKAN_PROP_KEY, JSON.stringify(session));
+    if (rechargeRes.getResponseCode() === 200) {
+      const rData = JSON.parse(rechargeRes.getContentText());
+      if (rData && rData.data && rData.data.user_account) {
+        const acc = rData.data.user_account;
+        const nonIos = parseFloat(acc.non_ios_balance) || 0;
+        const present = parseFloat(acc.latest_present_balance) || 0;
+        const ios = parseFloat(acc.ios_balance) || 0;
+        session.coinBalance = nonIos + present;
+        session.walletDetails = {
+          nonIosBalance: nonIos,
+          presentBalance: present,
+          iosBalance: ios,
+          totalAvailable: nonIos + present
+        };
       }
     }
+
+    // 2. ตรวจสอบข้อมูลผู้ใช้ (Nickname, Avatar)
+    const userUrl = 'https://www.kuaikanmanhua.com/v2/pweb/user_info/get';
+    const userRes = UrlFetchApp.fetch(userUrl, {
+      method: 'get',
+      muteHttpExceptions: true,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Referer': 'https://www.kuaikanmanhua.com/',
+        'Cookie': session.cookie
+      }
+    });
+    if (userRes.getResponseCode() === 200) {
+      const uData = JSON.parse(userRes.getContentText());
+      if (uData && uData.data && uData.data.user_info) {
+        session.user = uData.data.user_info;
+      }
+    }
+
+    // 3. ตรวจสอบสถานะ VIP
+    const vipUrl = 'https://www.kuaikanmanhua.com/v1/vip/pc/me';
+    const vipRes = UrlFetchApp.fetch(vipUrl, {
+      method: 'get',
+      muteHttpExceptions: true,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Referer': 'https://www.kuaikanmanhua.com/',
+        'Cookie': session.cookie
+      }
+    });
+    if (vipRes.getResponseCode() === 200) {
+      const vData = JSON.parse(vipRes.getContentText());
+      if (vData && vData.data && vData.data.vip) {
+        session.vipInfo = vData.data.vip;
+        session.isVip = Boolean(vData.data.vip.vip_type > 0 || (vData.data.vip.remained_days && vData.data.vip.remained_days > 0));
+      }
+    }
+
+    // 4. จัดการสถานะ Alert เหรียญหมด
+    if (session.coinBalance !== undefined && session.coinBalance <= 0) {
+      session.insufficientCoins = true;
+      if (!session.coinAlert || !session.coinAlert.hasAlert) {
+        session.coinAlert = {
+          hasAlert: true,
+          message: 'เหรียญ KuaiKan หมด กรุณาเติมเหรียญเพื่อปลดล็อคตอน',
+          currentBalance: 0,
+          timestamp: new Date().toISOString(),
+          dismissed: false
+        };
+      }
+    } else if (session.coinBalance !== undefined && session.coinBalance > 0) {
+      session.insufficientCoins = false;
+      if (session.coinAlert && session.coinAlert.hasAlert && (!session.coinAlert.requiredCoins || session.coinBalance >= session.coinAlert.requiredCoins)) {
+        session.coinAlert.hasAlert = false;
+        session.coinAlert.dismissed = true;
+      }
+    }
+
+    PropertiesService.getScriptProperties().setProperty(KUAIKAN_PROP_KEY, JSON.stringify(session));
   } catch (err) {
     console.warn('checkKuaikanWalletStatus fetch error:', err);
   }
 
   return getKuaikanAuthStatus();
+}
+
+/**
+ * สั่งซื้อตอน KuaiKan เพื่อปลดล็อคตอน VIP อัตโนมัติด้วยเหรียญในระบบ
+ */
+function purchaseKuaikanChapter(payload) {
+  try {
+    if (!payload || !payload.comicId) {
+      return { status: 'error', success: false, error: 'Missing comicId' };
+    }
+
+    const comicId = String(payload.comicId).trim();
+    const topicId = String(payload.topicId || '').trim();
+    const mangaName = String(payload.mangaName || '').trim();
+    const chapterTitle = String(payload.chapterTitle || '').trim();
+
+    // 1. ตรวจสอบสถานะกระเป๋าเหรียญและ Cookie ก่อน
+    const session = getKuaikanSessionData();
+    if (!session || !session.cookie) {
+      return {
+        status: 'error',
+        success: false,
+        outOfCoins: true,
+        error: 'ยังไม่ได้เชื่อมต่อบัญชี KuaiKan VIP กรุณาล็อกอินก่อน'
+      };
+    }
+
+    // อัปเดตยอดเหรียญล่าสุด
+    checkKuaikanWalletStatus();
+    const updatedSession = getKuaikanSessionData() || session;
+    const currentBalance = updatedSession.coinBalance !== undefined ? updatedSession.coinBalance : 0;
+
+    // หากเหรียญเป็น 0 หรือติดลบ ให้ตั้งสถานะเหรียญหมดทันที
+    if (currentBalance <= 0) {
+      setKuaikanCoinAlert({
+        message: 'เหรียญ KuaiKan หมด กรุณาเติมเหรียญเพื่อปลดล็อคตอน',
+        comicTitle: mangaName,
+        chapterTitle: chapterTitle,
+        comicId: comicId,
+        currentBalance: 0,
+        requiredCoins: 58
+      });
+      return {
+        status: 'error',
+        success: false,
+        outOfCoins: true,
+        insufficientCoins: true,
+        error: 'เหรียญ KuaiKan หมด กรุณาเติมเหรียญเพื่อปลดล็อคตอน'
+      };
+    }
+
+    // 2. เรียก API ซื้อตอนของ KuaiKan
+    let buySuccess = false;
+    let buyError = '';
+    let isOutOfCoins = false;
+
+    try {
+      const payWinUrl = 'https://www.kuaikanmanhua.com/v2/comicbuy/pc/comic_pay_window';
+      const payWinPayload = {
+        topic_id: topicId ? parseInt(topicId, 10) : 0,
+        comic_id: parseInt(comicId, 10),
+        entrance_type: 0,
+        from: 19
+      };
+
+      const payWinRes = UrlFetchApp.fetch(payWinUrl, {
+        method: 'post',
+        contentType: 'application/json',
+        payload: JSON.stringify(payWinPayload),
+        muteHttpExceptions: true,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Referer': 'https://www.kuaikanmanhua.com/webs/comic-next/' + comicId,
+          'Cookie': updatedSession.cookie
+        }
+      });
+
+      const winData = JSON.parse(payWinRes.getContentText());
+      if (winData && winData.code === 200 && winData.data) {
+        const priceInfo = winData.data.price_info || {};
+        const batchList = priceInfo.batch_purchase_list || [];
+        const singleBuy = batchList.length > 0 ? batchList[0] : null;
+        const encryptStr = singleBuy ? singleBuy.comicbuy_encrypt_str : '';
+
+        if (encryptStr) {
+          // สั่งซื้อผ่าน /v2/comicbuy/encrypt_buy_h5
+          const buyUrl = 'https://www.kuaikanmanhua.com/v2/comicbuy/encrypt_buy_h5';
+          const buyPayload = {
+            target_id: parseInt(comicId, 10),
+            comicbuy_encrypt_str: encryptStr,
+            cps: 'pc',
+            auto_pay: true,
+            source: 1,
+            from: 19
+          };
+
+          const buyRes = UrlFetchApp.fetch(buyUrl, {
+            method: 'post',
+            contentType: 'application/json',
+            payload: JSON.stringify(buyPayload),
+            muteHttpExceptions: true,
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+              'Referer': 'https://www.kuaikanmanhua.com/webs/comic-next/' + comicId,
+              'Cookie': updatedSession.cookie
+            }
+          });
+
+          const buyResult = JSON.parse(buyRes.getContentText());
+          if (buyResult && buyResult.code === 200) {
+            buySuccess = true;
+          } else {
+            buyError = (buyResult && buyResult.message) || 'Purchase failed with code ' + (buyResult ? buyResult.code : 'unknown');
+            if (buyResult && (buyResult.code === 3004 || buyResult.code === 3005 || String(buyResult.message).indexOf('余额不足') !== -1)) {
+              isOutOfCoins = true;
+            }
+          }
+        }
+      } else {
+        buyError = (winData && winData.message) || 'Pay window returned code ' + (winData ? winData.code : 'unknown');
+        if (winData && (winData.code === 3004 || winData.code === 3005 || String(winData.message).indexOf('余额不足') !== -1)) {
+          isOutOfCoins = true;
+        }
+      }
+    } catch (apiErr) {
+      console.warn('Web purchase API attempt error:', apiErr);
+      buyError = apiErr.toString();
+    }
+
+    // 3. Fallback: เรียก App Comic Buy API (api.kkmh.com)
+    if (!buySuccess && !isOutOfCoins) {
+      try {
+        const appBuyUrl = 'https://api.kkmh.com/v1/comicbuy/comic_buy';
+        const appBuyPayload = {
+          comic_id: comicId,
+          topic_id: topicId,
+          auto_pay: 1
+        };
+        const appBuyRes = UrlFetchApp.fetch(appBuyUrl, {
+          method: 'post',
+          contentType: 'application/json',
+          payload: JSON.stringify(appBuyPayload),
+          muteHttpExceptions: true,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 KuaiKan/8.2.0',
+            'Cookie': updatedSession.cookie
+          }
+        });
+        const appData = JSON.parse(appBuyRes.getContentText());
+        if (appData && (appData.code === 200 || appData.code === 0)) {
+          buySuccess = true;
+        } else {
+          if (appData && (appData.code === 3004 || String(appData.message).indexOf('余额不足') !== -1 || String(appData.message).indexOf('KK币不足') !== -1)) {
+            isOutOfCoins = true;
+          }
+        }
+      } catch (appErr) {
+        console.warn('App buy fallback error:', appErr);
+      }
+    }
+
+    // 4. ทดสอบดึงภาพเพื่อยืนยันว่าปลดล็อคสำเร็จจริงหรือไม่
+    const testResult = testKuaikanLatestChapter(comicId, updatedSession.cookie);
+    if (testResult && testResult.imagesCount > 1 && !testResult.isLocked) {
+      buySuccess = true;
+      dismissKuaikanCoinAlert();
+      return {
+        status: 'success',
+        success: true,
+        message: 'ปลดล็อคตอน ' + chapterTitle + ' เรียบร้อยแล้ว',
+        comicId: comicId,
+        imagesCount: testResult.imagesCount,
+        test: testResult
+      };
+    }
+
+    // 5. หากยังไม่สำเร็จ ตรวจสอบเงื่อนไขเหรียญหมด หรือติด VIP Exclusive
+    checkKuaikanWalletStatus();
+    const finalSession = getKuaikanSessionData() || updatedSession;
+    const finalBalance = finalSession.coinBalance !== undefined ? finalSession.coinBalance : currentBalance;
+
+    if (isOutOfCoins || finalBalance <= 58) {
+      setKuaikanCoinAlert({
+        message: 'เหรียญ KuaiKan หมด กรุณาเติมเหรียญเพื่อปลดล็อคตอน',
+        comicTitle: mangaName,
+        chapterTitle: chapterTitle,
+        comicId: comicId,
+        currentBalance: finalBalance,
+        requiredCoins: 58
+      });
+      return {
+        status: 'error',
+        success: false,
+        outOfCoins: true,
+        insufficientCoins: true,
+        error: 'เหรียญ KuaiKan หมด กรุณาเติมเหรียญเพื่อปลดล็อคตอน'
+      };
+    }
+
+    setKuaikanCoinAlert({
+      message: 'ตอนติด VIP Lock กรุณาต่ออายุ VIP หรือเติมเหรียญเพื่อปลดล็อค',
+      comicTitle: mangaName,
+      chapterTitle: chapterTitle,
+      comicId: comicId,
+      currentBalance: finalBalance,
+      requiredCoins: 58
+    });
+
+    return {
+      status: 'error',
+      success: false,
+      outOfCoins: true,
+      error: 'ไม่สามารถปลดล็อคตอนได้: ' + (buyError || 'ตอนติด VIP Lock กรุณาเติมเหรียญ/VIP'),
+      comicId: comicId,
+      currentBalance: finalBalance
+    };
+  } catch (err) {
+    console.error('purchaseKuaikanChapter fatal error:', err);
+    return { status: 'error', success: false, error: err.toString() };
+  }
 }
 
 function clearKuaikanAuth() {
@@ -3536,7 +3827,7 @@ function saveKuaikanAuth(payload) {
 /**
  * ทดสอบดึงข้อมูลตอนล่าสุดเพื่อเช็ค VIP และภาพที่ปลดล็อค
  */
-function testKuaikanLatestChapter(comicId, overrideCookie) {
+function testKuaikanLatestChapter(comicId, overrideCookie, options) {
   try {
     const isExplicitId = Boolean(comicId);
     const targetComicId = isExplicitId ? String(comicId).trim() : null;
@@ -3642,26 +3933,40 @@ function testKuaikanLatestChapter(comicId, overrideCookie) {
     const thaiMangaName = (thaiInfo && thaiInfo.manganame) ? thaiInfo.manganame : (topicTitle || ('Comic_' + fetchComicId));
     const mangaId = (thaiInfo && thaiInfo.mangaid) ? thaiInfo.mangaid : null;
 
-    // หากระบุ comicId เจาะจง แล้วติดล็อคหรือไม่มีภาพ ให้คืนค่า error ทันที ไม่ให้ไปเย็บภาพผิดเรื่องเด็ดขาด
+    // หากระบุ comicId เจาะจง แล้วติดล็อคหรือไม่มีภาพ ให้ลอง Auto Purchase (ถ้ามีสิทธิ์) หรือแจ้งเตือนเหรียญหมด
     if (isExplicitId && isLocked) {
-      if (isPay) {
+      if (options && options.autoPurchase) {
+        console.log('Comic ' + targetComicId + ' is locked, attempting auto-purchase...');
         try {
-          setKuaikanCoinAlert({
+          const buyRes = purchaseKuaikanChapter({
             comicId: targetComicId,
-            comicTitle: thaiMangaName || topicTitle || '',
-            chapterTitle: title || ('Comic ' + targetComicId),
-            message: 'เหรียญ KuaiKan ไม่เพียงพอสำหรับการปลดล็อคตอน VIP (' + (title || '') + ') กรุณาเติมเหรียญ'
+            topicId: (options && options.topicId) || '',
+            mangaName: thaiMangaName,
+            chapterTitle: title
           });
-        } catch (alertErr) {
-          console.warn('Auto setKuaikanCoinAlert error:', alertErr);
+          if (buyRes && buyRes.success && buyRes.test && buyRes.test.imagesCount > 1) {
+            return buyRes.test;
+          }
+        } catch (buyErr) {
+          console.warn('Auto purchase failed:', buyErr);
         }
       }
+
+      try {
+        setKuaikanCoinAlert({
+          comicId: targetComicId,
+          comicTitle: thaiMangaName || topicTitle || '',
+          chapterTitle: title || ('Comic ' + targetComicId),
+          message: 'เหรียญ KuaiKan หมด หรือไม่เพียงพอสำหรับการปลดล็อคตอน VIP (' + (title || '') + ') กรุณาเติมเหรียญ'
+        });
+      } catch (alertErr) {
+        console.warn('Auto setKuaikanCoinAlert error:', alertErr);
+      }
+
       return {
         status: 'error',
         success: false,
-        error: isPay
-          ? 'เหรียญ KuaiKan ไม่เพียงพอสำหรับการปลดล็อคตอน VIP หรือตอนยังไม่เปิดให้อ่าน (ComicID: ' + targetComicId + ')'
-          : 'Cannot fetch images for ComicID ' + targetComicId + ' (ตอนอาจติด VIP Lock หรือยังไม่เปิดให้อ่าน)',
+        error: 'เหรียญ KuaiKan หมด หรือตอนยังติด VIP Lock กรุณาเติมเหรียญเพื่อปลดล็อค (ComicID: ' + targetComicId + ')',
         comicId: targetComicId,
         mangaId: mangaId,
         mangaName: thaiMangaName,
@@ -3671,7 +3976,8 @@ function testKuaikanLatestChapter(comicId, overrideCookie) {
         imagesCount: 0,
         isPay: isPay,
         isLocked: true,
-        insufficientCoins: isPay,
+        insufficientCoins: true,
+        outOfCoins: true,
         isVipUnlocked: false,
         isLogin: isLogin,
         sampleImages: [],

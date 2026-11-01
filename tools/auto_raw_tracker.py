@@ -132,17 +132,50 @@ def process_single_chapter(task):
     print(f"📖 กำลังประมวลผล: {manga_name} | {chapter_title} (ComicID: {comic_id})")
     print(f"=======================================================")
 
-    # 1. ดึงภาพตอนจาก GAS
+    # 1. ดึงภาพตอนจาก GAS (เปิด autoPurchase: True)
     print(f"1. ดึงข้อมูลภาพของ ComicID {comic_id}...")
-    res = call_gas("TEST_KUAIKAN_CHAPTER", {"comicId": comic_id})
+    res = call_gas("TEST_KUAIKAN_CHAPTER", {
+        "comicId": comic_id,
+        "topicId": task.get("topicId") or "",
+        "autoPurchase": True
+    })
     if not res.get("status") == "success" or not res.get("data"):
         print(f"❌ ดึงข้อมูลภาพไม่สำเร็จ: {res}")
         return False
 
     data = res["data"]
     if data.get("isLocked") or not data.get("success", True):
-        print(f"❌ ตอนติดล็อคหรือดึงภาพไม่ได้ (ComicID: {comic_id}): {data.get('error') or 'isLocked'}")
-        return False
+        # ตรวจสอบว่าสาเหตุมาจากเหรียญหมดหรือไม่
+        if data.get("outOfCoins") or data.get("insufficientCoins"):
+            print(f"\n🚨 [KUAIKAN OUT OF COINS] ตอนติด VIP Lock และเหรียญ KuaiKan หมด! (ComicID: {comic_id})")
+            print(f"   สาเหตุ: {data.get('error')}")
+            print(f"   📢 ระบบได้บันทึก Flag KUAIKAN_OUT_OF_COINS และแจ้งเตือนแถบสีแดงไปยัง Frontend เรียบร้อยแล้ว")
+            return False
+
+        # ถ้าติดล็อคแต่ยังไม่ได้ลองซื้อ ลองส่งคำสั่งซื้อตอนโดยตรง
+        print(f"\n🔒 ตรวจพบตอนติด VIP Lock (ComicID: {comic_id}) -> กำลังกดซื้อตอนเพื่อปลดล็อคอัตโนมัติ...")
+        buy_res = call_gas("PURCHASE_KUAIKAN_CHAPTER", {
+            "comicId": comic_id,
+            "topicId": task.get("topicId") or "",
+            "mangaName": manga_name,
+            "chapterTitle": chapter_title
+        })
+
+        if buy_res.get("status") == "success" and buy_res.get("data", {}).get("success"):
+            print(f"🎉 ซื้อตอน {chapter_title} สำเร็จเรียบร้อย! กำลังดึงภาพจริง...")
+            res = call_gas("TEST_KUAIKAN_CHAPTER", {"comicId": comic_id})
+            data = res.get("data", {})
+            if data.get("isLocked") or not data.get("success", True):
+                print(f"❌ ยังคงไม่สามารถดึงภาพตอนที่ปลดล็อคแล้วได้: {data.get('error')}")
+                return False
+        else:
+            bdata = buy_res.get("data", {})
+            if bdata.get("outOfCoins") or bdata.get("insufficientCoins"):
+                print(f"\n🚨 [KUAIKAN OUT OF COINS] ซื้อตอนไม่สำเร็จเนื่องจากเหรียญหมด / ยอดเงินไม่พอ!")
+                print(f"   📢 ส่งสัญญาณ KUAIKAN_OUT_OF_COINS: true ไปยัง Frontend เรียบร้อยแล้ว กรุณาเติมเหรียญ")
+            else:
+                print(f"❌ ซื้อตอนไม่สำเร็จ: {buy_res.get('message') or bdata.get('error')}")
+            return False
 
     urls = data.get("imageDetails") or data.get("allImages") or data.get("sampleImages") or []
     total_images = len(urls)

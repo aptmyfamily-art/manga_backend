@@ -23,6 +23,7 @@ import {
   ClipboardList,
   Send,
 } from "lucide-react"
+import { KuaikanCoinWarningBanner } from "@/components/ui/KuaikanCoinWarningBanner"
 
 interface DashboardViewProps {
   mangaList: any[]
@@ -31,6 +32,7 @@ interface DashboardViewProps {
   onSwitchToQueue: (searchTerm?: string) => void
   onOpenUpdateQueue: (queueItem: any) => void
   onManualRefresh: () => void
+  onSwitchToConnectors?: () => void
 }
 
 export function DashboardView({
@@ -40,6 +42,7 @@ export function DashboardView({
   onSwitchToQueue,
   onOpenUpdateQueue,
   onManualRefresh,
+  onSwitchToConnectors,
 }: DashboardViewProps) {
   const now = new Date()
   const year = now.getFullYear()
@@ -210,6 +213,12 @@ export function DashboardView({
           ภาพรวมระบบและการปล่อยมังงะ (Smart Dashboard)
         </p>
       </div>
+
+      {/* KuaiKan Insufficient Coins Warning Banner */}
+      <KuaikanCoinWarningBanner
+        onNavigateConnectors={onSwitchToConnectors}
+        compact={false}
+      />
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

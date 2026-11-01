@@ -1,6 +1,8 @@
 import * as React from "react"
 import { callGasApi } from "@/api/gasClient"
 import { loadImageElement, normalizeKuaikanImageUrl } from "./KuaiKanLoginModal"
+import { notifyCoinAlertChange } from "@/lib/kuaikanCoinAlert"
+import { KuaikanCoinWarningBanner } from "@/components/ui/KuaikanCoinWarningBanner"
 import {
   Dialog,
   DialogContent,
@@ -173,11 +175,32 @@ export function AutoRawPipelineModal({
       return { success: false, error: e.message || "ดึงข้อมูลตอนไม่สำเร็จ" }
     }
 
-    if (!chapterRes || !chapterRes.data || !chapterRes.data.success) {
+    if (!chapterRes || (!chapterRes.success && !chapterRes.data?.success)) {
+      const errStr = String(chapterRes?.error || "")
+      if (
+        chapterRes?.insufficientCoins ||
+        chapterRes?.isPay ||
+        errStr.includes("เหรียญ") ||
+        errStr.includes("coin") ||
+        errStr.includes("VIP Lock")
+      ) {
+        notifyCoinAlertChange({
+          hasAlert: true,
+          comicId: String(task.comicId),
+          comicTitle: task.mangaName || "",
+          chapterTitle: task.chapterTitle || `Comic ${task.comicId}`,
+          message:
+            chapterRes?.error ||
+            `⚠️ เหรียญ KuaiKan ไม่เพียงพอสำหรับตอน [${task.mangaName}] กรุณาเติมเหรียญ`,
+          requiredCoins: 58,
+          timestamp: new Date().toISOString(),
+          dismissed: false,
+        })
+      }
       return { success: false, error: chapterRes?.error || "ไม่พบข้อมูลภาพหรือตอนถูกล็อค" }
     }
 
-    const data = chapterRes.data
+    const data = chapterRes.data || chapterRes
     const rawItems: any[] = data.imageDetails || data.allImages || data.sampleImages || []
     if (!rawItems.length) {
       return { success: false, error: "ไม่พบรูปภาพในตอนนี้" }
@@ -552,6 +575,11 @@ export function AutoRawPipelineModal({
             </div>
           </div>
         </DialogHeader>
+
+        {/* KuaiKan Insufficient Coins Warning Banner */}
+        <div className="px-6 pt-3">
+          <KuaikanCoinWarningBanner compact={true} />
+        </div>
 
         {/* Cooldown Active Banner */}
         {cooldownActive && (

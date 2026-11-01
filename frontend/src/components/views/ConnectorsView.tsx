@@ -38,12 +38,15 @@ import {
   Flame,
   Tv,
   Scissors,
+  Coins,
 } from "lucide-react"
 import {
   normalizeKuaikanImageUrl,
   loadImageElement,
 } from "@/components/modals/KuaiKanLoginModal"
 import { ThunderScansModal } from "@/components/modals/ThunderScansModal"
+import { KuaikanCoinWarningBanner } from "@/components/ui/KuaikanCoinWarningBanner"
+import { useKuaikanCoinAlert } from "@/lib/kuaikanCoinAlert"
 
 interface ConnectorsViewProps {
   mangaList: any[]
@@ -56,6 +59,16 @@ export function ConnectorsView({ mangaList }: ConnectorsViewProps) {
   // ThunderScans Modal State
   const [thunderModalOpen, setThunderModalOpen] = React.useState(false)
 
+  // KuaiKan Coin & Wallet Alert Hook
+  const {
+    hasAlert: hasCoinAlert,
+    alertInfo: coinAlertInfo,
+    coinBalance,
+    triggerAlert: triggerCoinAlert,
+    checkWallet: checkKuaikanWallet,
+    checkingWallet,
+  } = useKuaikanCoinAlert()
+
   // KuaiKan Session State
   const [loadingSession, setLoadingSession] = React.useState(false)
   const [sessionStatus, setSessionStatus] = React.useState<{
@@ -64,6 +77,9 @@ export function ConnectorsView({ mangaList }: ConnectorsViewProps) {
     updatedAt?: string
     cookiePreview?: string
     message?: string
+    coinBalance?: number | null
+    insufficientCoins?: boolean
+    coinAlert?: any
   } | null>(null)
 
   // KuaiKan Active Sub-tab
@@ -112,8 +128,8 @@ export function ConnectorsView({ mangaList }: ConnectorsViewProps) {
   const fetchSessionStatus = React.useCallback(async () => {
     setLoadingSession(true)
     try {
-      const res = await callGasApi<any>("GET_KUAIKAN_AUTH_STATUS")
-      if (res && res.status === "success") {
+      const res = await callGasApi<any>("GET_KUAIKAN_SESSION")
+      if (res && (res.loggedIn || res.status === "success")) {
         setSessionStatus(res)
       } else {
         setSessionStatus({ loggedIn: false })
@@ -250,9 +266,26 @@ export function ConnectorsView({ mangaList }: ConnectorsViewProps) {
           toast.success(`🎉 ปลดล็อคสำเร็จ! พบ ${res.imagesCount} ชิ้น HD (${res.thaiTitle || res.mangaName})`)
         } else {
           toast.warning("ตอนยังถูกล็อค (อาจยังไม่ใช่ VIP หรือต้องใช้เหรียญปลด)")
+          if (res.isPay || res.insufficientCoins) {
+            triggerCoinAlert({
+              comicId: String(comicId),
+              comicTitle: res.thaiTitle || res.mangaName || "",
+              chapterTitle: res.title || `Comic ${comicId}`,
+              requiredCoins: res.selling_kk_currency || 58,
+              message: `⚠️ เหรียญ KuaiKan ไม่เพียงพอสำหรับตอน [${res.title || comicId}] กรุณาเติมเหรียญ`,
+            })
+          }
         }
       } else {
         toast.error(res?.error || "ทดสอบดึงตอนไม่สำเร็จ")
+        if (res && (res.insufficientCoins || res.isPay || String(res.error).includes("เหรียญ") || String(res.error).includes("coin") || String(res.error).includes("VIP Lock"))) {
+          triggerCoinAlert({
+            comicId: String(comicId),
+            comicTitle: res.thaiTitle || res.mangaName || "",
+            chapterTitle: res.title || `Comic ${comicId}`,
+            message: res.error || `⚠️ เหรียญ KuaiKan ไม่เพียงพอสำหรับตอน [${res.title || comicId}] กรุณาเติมเหรียญ`,
+          })
+        }
       }
     } catch (err: any) {
       toast.error(err.message || "เกิดข้อผิดพลาดในการทดสอบ")
@@ -808,6 +841,24 @@ export function ConnectorsView({ mangaList }: ConnectorsViewProps) {
                     <Badge variant="outline" className="border-slate-700 bg-slate-800/60 text-slate-300 text-[11px]">
                       Root: แปลจนเมื่อย
                     </Badge>
+                    {/* Coin / Wallet Status Badge */}
+                    {coinBalance !== null ? (
+                      <span
+                        className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold border ${
+                          hasCoinAlert || coinBalance <= 0
+                            ? "bg-rose-500/20 text-rose-300 border-rose-500/40 animate-pulse"
+                            : "bg-amber-500/20 text-amber-300 border-amber-500/40"
+                        }`}
+                      >
+                        <Coins className="h-3.5 w-3.5" />
+                        เหรียญ: {coinBalance} KK币
+                      </span>
+                    ) : (sessionStatus?.insufficientCoins || hasCoinAlert) ? (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-rose-500/20 px-2.5 py-0.5 text-xs font-semibold text-rose-300 border border-rose-500/40 animate-pulse">
+                        <AlertTriangle className="h-3.5 w-3.5" />
+                        เหรียญ KuaiKan หมด
+                      </span>
+                    ) : null}
                   </div>
                   <p className="text-xs text-slate-400 mt-1">
                     ระบบดึงตอน VIP ต้นฉบับจีน • คำนวณความกว้างมาตรฐาน • เย็บเป็น 20 หน้าลง Google Drive
@@ -825,7 +876,18 @@ export function ConnectorsView({ mangaList }: ConnectorsViewProps) {
               </div>
 
               {/* Action Buttons */}
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={checkKuaikanWallet}
+                  disabled={checkingWallet}
+                  className="border-[#26334d] bg-[#151d2f] text-amber-300 hover:text-white text-xs"
+                  title="ตรวจสอบยอดเหรียญ KuaiKan"
+                >
+                  <Coins className={`h-3.5 w-3.5 mr-1.5 ${checkingWallet ? "animate-spin" : ""}`} />
+                  ตรวจยอดเหรียญ
+                </Button>
                 <Button
                   variant="outline"
                   size="sm"
@@ -848,6 +910,11 @@ export function ConnectorsView({ mangaList }: ConnectorsViewProps) {
                   </Button>
                 )}
               </div>
+            </div>
+
+            {/* Emergency KuaiKan Coin Warning Banner inside Connector Card */}
+            <div className="mt-4">
+              <KuaikanCoinWarningBanner inCard={true} />
             </div>
 
             {/* Sub-Tabs Selector */}

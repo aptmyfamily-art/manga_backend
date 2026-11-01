@@ -28,7 +28,10 @@ import {
   Scissors,
   Layers,
   AlertTriangle,
+  Coins,
 } from "lucide-react"
+import { KuaikanCoinWarningBanner } from "@/components/ui/KuaikanCoinWarningBanner"
+import { notifyCoinAlertChange } from "@/lib/kuaikanCoinAlert"
 
 interface KuaiKanLoginModalProps {
   open: boolean
@@ -242,7 +245,7 @@ export function KuaiKanLoginModal({
   const fetchSessionStatus = React.useCallback(async (silent = false) => {
     if (!silent) setLoadingSession(true)
     try {
-      const res = await callGasApi<any>("GET_KUAIKAN_AUTH")
+      const res = await callGasApi<any>("GET_KUAIKAN_SESSION")
       setSessionStatus(res)
       return res
     } catch (err: any) {
@@ -555,9 +558,33 @@ export function KuaiKanLoginModal({
           toast.success(`🎉 ปลดล็อคสำเร็จ! พบ ${res.imagesCount} ภาพ HD`)
         } else {
           toast.warning("ตอนยังถูกล็อค (อาจยังไม่ใช่ VIP หรือตอนต้องใช้เหรียญซื้อ)")
+          if (res.isPay || res.insufficientCoins) {
+            notifyCoinAlertChange({
+              hasAlert: true,
+              comicId: "855368",
+              comicTitle: res.thaiTitle || res.mangaName || "ข้าคือจอมวายร้ายผู้ยิ่งใหญ่",
+              chapterTitle: res.title || "第366话",
+              message: "เหรียญ KuaiKan ไม่เพียงพอสำหรับการปลดล็อคตอน VIP กรุณาเติมเหรียญ",
+              requiredCoins: res.selling_kk_currency || 58,
+              timestamp: new Date().toISOString(),
+              dismissed: false,
+            })
+          }
         }
       } else {
         toast.error(res?.error || "ทดสอบดึงตอนไม่สำเร็จ")
+        if (res && (res.insufficientCoins || res.isPay || String(res.error).includes("เหรียญ") || String(res.error).includes("coin") || String(res.error).includes("VIP Lock"))) {
+          notifyCoinAlertChange({
+            hasAlert: true,
+            comicId: "855368",
+            comicTitle: res?.thaiTitle || res?.mangaName || "ข้าคือจอมวายร้ายผู้ยิ่งใหญ่",
+            chapterTitle: res?.title || "第366话",
+            message: res?.error || "เหรียญ KuaiKan ไม่เพียงพอสำหรับการปลดล็อคตอน VIP กรุณาเติมเหรียญ",
+            requiredCoins: 58,
+            timestamp: new Date().toISOString(),
+            dismissed: false,
+          })
+        }
       }
     } catch (err: any) {
       toast.error(err.message || "เกิดข้อผิดพลาดในการทดสอบ")
@@ -883,6 +910,11 @@ export function KuaiKanLoginModal({
             )}
           </div>
         </DialogHeader>
+
+        {/* KuaiKan Insufficient Coins Warning Banner */}
+        <div className="px-5 pt-3">
+          <KuaikanCoinWarningBanner compact={true} />
+        </div>
 
         {/* Tab Navigation Switcher */}
         <div className="px-5 pt-3 pb-0 bg-[#0b101b]">
