@@ -42,9 +42,20 @@
 
 ---
 
-## 2. สิ่งที่ต้องทำต่อทันที (Next Tasks)
+### F. ระบบบันทึกคิวงาน WorkQueue มาตรฐาน (KuaiKan WorkQueue Standards)
+- **ปรับปรุงครบทุกจุดในระบบ:** `backend/Code.js` (GAS Version `@45`), `tools/auto_raw_tracker.py`, `KuaiKanLoginModal.tsx`, และ `AutoRawPipelineModal.tsx`
+- **กฎเหล็กที่บังคับใช้ 100%:**
+  - 🔗 **Work Link (`worklink`):** `[อัป Raw] https://drive.google.com/drive/folders/...`
+  - **Upload Status (`uploadstatus`):** `เสร็จแล้ว`
+  - **Uploader Name (`uploadername`):** `Apt`
+- **Deploy สำเร็จ:** Google Apps Script Version `@45` และ GitHub Pages Commit `e3e5919`
 
-### 📌 ภารกิจที่ 1: ระบบเช็คแต้ม & ซื้อตอนที่ติด Locked ของ ThunderScans (en-thunder)
+---
+
+## 2. สิ่งที่ต้องทำต่อ (Next Tasks)
+
+### 📌 ภารกิจระบบเช็คแต้ม & ซื้อตอนที่ติด Locked ของ ThunderScans (en-thunder)
+*(ปัจจุบันระงับไว้ชั่วคราวตามคำสั่งผู้ใช้ พร้อมเริ่มทำต่อเมื่อผู้ใช้สั่งการ)*
 1. **เมื่อตรวจพบตอนที่เป็นสถานะ LOCKED (เช่น Chapter 62 ราคา 50 Coins, Post ID: `692677`):**
    - ดึงค่า `chapter_post_id` และ `nonce` จากหน้าเว็บตอนนั้น
    - ยิงคำสั่งซื้อตอน (AJAX Buy Chapter) ไปยัง Endpoint:
@@ -60,18 +71,7 @@
    - หากเหรียญไม่พอซื้อตอน ให้แจ้งเตือนสถานะ Insufficient Coins บนหน้าเว็บ
 3. **เมื่อปลดล็อคสำเร็จ:**
    - ให้ดาวน์โหลดภาพทุกสไลซ์ และส่งเข้าสู่ **Continuous Vertical Stitching Algorithm** ตัดเป็น **20 หน้ามาตรฐานพอดี (`001.webp` ถึง `020.webp`)** ส่งเข้า Google Drive โฟลเดอร์ `แปลจนเมื่อย` ตาม Flow เดิม
-
----
-
-### 📌 ภารกิจที่ 2: ฟอร์แมตการเพิ่มคิวงาน (WorkQueue) มาตรฐาน
-
-> [!IMPORTANT]
-> **กฎเหล็กการลงข้อมูลในตาราง WorkQueue (ทั้ง ThunderScans และ KuaiKan):**
-> 1. **ช่อง 🔗 ลิงก์งานหลัก (Work Link):** ต้องขึ้นต้นด้วย `[อัป Raw]` ตามด้วยลิงก์โฟลเดอร์ Google Drive เสมอ  
->    *รูปแบบตัวอย่าง:*  
->    `[อัป Raw] https://drive.google.com/drive/folders/1NLoOdg-b0OwCIU18DXaxLB-EF0VS01y0`
-> 2. **ช่อง อัป Raw (uploadstatus):** ต้องใส่สถานะว่า `เสร็จแล้ว`
-> 3. **ช่อง ทีมงาน / ผู้รับผิดชอบ (uploadername):** ต้องใส่ชื่อทีมงานว่า `Apt`
+   - ลงคิวงาน WorkQueue ด้วยฟอร์แมต `[อัป Raw] ...`, `เสร็จแล้ว`, `Apt` ตามมาตรฐานเดียวกัน
 
 ---
 
