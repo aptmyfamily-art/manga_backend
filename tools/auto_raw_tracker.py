@@ -140,7 +140,12 @@ def process_single_chapter(task):
         "autoPurchase": True
     })
     if not res.get("status") == "success" or not res.get("data"):
-        print(f"❌ ดึงข้อมูลภาพไม่สำเร็จ: {res}")
+        err_msg = res.get("message") or str(res)
+        if "เหรียญ" in err_msg or "VIP" in err_msg or "outOfCoins" in err_msg:
+            print(f"\n🚨 [KUAIKAN OUT OF COINS] {err_msg}")
+            print(f"   📢 ระบบได้บันทึก Flag KUAIKAN_OUT_OF_COINS: true และแจ้งเตือนแถบสีแดงไปยัง Frontend เรียบร้อยแล้ว")
+        else:
+            print(f"❌ ดึงข้อมูลภาพไม่สำเร็จ: {res}")
         return False
 
     data = res["data"]
