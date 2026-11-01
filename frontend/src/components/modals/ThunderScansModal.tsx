@@ -428,7 +428,7 @@ export function ThunderScansModal({
     }
   }
 
-  // VIP Stitch & Upload to Google Drive (20 Proportional Pages)
+  // VIP Stitch & Upload to Google Drive (Continuous Vertical Stitching & Slicing into 20 Proportional Pages)
   const handleStitchAndUpload = async () => {
     if (!testResult) {
       toast.error("กรุณากดทดสอบดึงตอนก่อน")
@@ -442,122 +442,150 @@ export function ThunderScansModal({
     }
 
     const totalPages = rawUrls.length
-    const totalParts =
-      stitchMode === "slices20"
-        ? Math.ceil(totalPages / 20)
-        : Math.min(20, totalPages)
+    // In total20 mode, target is always exactly 20 pages!
+    const targetParts = stitchMode === "slices20" ? Math.ceil(totalPages / 20) : 20
 
     setStitching(true)
     setDriveAuthError(null)
     setStitchProgress({
       currentPart: 0,
-      totalParts,
-      pageRange: `เริ่มต้นคำนวณ (${stitchMode === "total20" ? `รวม ${totalPages} ชิ้น -> แบ่งเป็น ${totalParts} ไฟล์` : `รวม ${totalPages} ชิ้น -> ไฟล์ละ 20 ชิ้น รวมเป็น ${totalParts} ไฟล์`})`,
-      percent: 5,
-      statusText: "กำลังวิเคราะห์ความกว้างมาตรฐานจากชิ้นส่วนที่ 15...",
+      totalParts: targetParts,
+      pageRange: `เตรียมการเย็บต่อเนื่อง ${targetParts} หน้า`,
+      percent: 3,
+      statusText: `กำลังดาวน์โหลดและวิเคราะห์ชิ้นภาพทั้งหมด ${totalPages} ชิ้น...`,
     })
 
     let uploadedCount = 0
 
     try {
-      // 1. Dynamic slice #15 canvas width measurement
-      const sampleIdx = totalPages >= 15 ? 14 : Math.floor(totalPages / 2)
-      let standardWidth = 1280
+      // 1. Download and load all raw slice images
+      const loadedSlices = await Promise.all(
+        rawUrls.map((u, i) =>
+          loadThunderScansImageElement(u, (notice) => {
+            setStitchProgress((prev) =>
+              prev ? { ...prev, statusText: `ชิ้นที่ ${i + 1}/${totalPages}: ${notice}` } : null
+            )
+          })
+        )
+      )
 
-      try {
-        const sampleImg = await loadThunderScansImageElement(rawUrls[sampleIdx])
-        if (sampleImg && sampleImg.naturalWidth && sampleImg.naturalWidth > 100) {
-          standardWidth = sampleImg.naturalWidth
+      const validSlices: HTMLImageElement[] = []
+      for (let i = 0; i < loadedSlices.length; i++) {
+        const img = loadedSlices[i]
+        if (!img) {
+          throw new Error(`ไม่สามารถโหลดชิ้นภาพที่ ${i + 1} จากทั้งหมด ${totalPages} ชิ้นได้ กรุณาลองใหม่อีกครั้ง`)
         }
-      } catch (err) {
-        console.warn("Could not load slice #15, trying first slice:", err)
-        try {
-          const firstImg = await loadThunderScansImageElement(rawUrls[0])
-          if (firstImg && firstImg.naturalWidth && firstImg.naturalWidth > 100) {
-            standardWidth = firstImg.naturalWidth
-          }
-        } catch {}
+        validSlices.push(img)
       }
 
-      toast.info(`📏 ความกว้างมาตรฐาน (ชิ้นที่ ${sampleIdx + 1}): ${standardWidth}px (${stitchMode === "total20" ? `แบ่งรวมเป็น ${totalParts} ไฟล์` : `ไฟล์ละ 20 ชิ้น`})`)
+      // 2. Dynamic slice #15 canvas width measurement
+      const sampleIdx = validSlices.length >= 15 ? 14 : Math.floor(validSlices.length / 2)
+      const standardWidth = validSlices[sampleIdx].naturalWidth || validSlices[0].naturalWidth || 1280
+
+      // 3. Calculate continuous vertical layout of all slices
+      interface SliceLayout {
+        img: HTMLImageElement
+        scaledH: number
+        yTop: number
+        yBottom: number
+        scale: number
+      }
+
+      let runningY = 0
+      const sliceLayouts: SliceLayout[] = []
+
+      for (let i = 0; i < validSlices.length; i++) {
+        const img = validSlices[i]
+        const scale = standardWidth / img.naturalWidth
+        const scaledH = Math.round(img.naturalHeight * scale)
+        sliceLayouts.push({
+          img,
+          scaledH,
+          yTop: runningY,
+          yBottom: runningY + scaledH,
+          scale,
+        })
+        runningY += scaledH
+      }
+
+      const totalChapterHeight = runningY
+      if (totalChapterHeight <= 0) {
+        throw new Error("ความสูงรวมของมังงะเป็น 0 ไม่สามารถเย็บภาพได้")
+      }
+
+      const totalParts = targetParts
+      const pageTargetHeight = Math.ceil(totalChapterHeight / totalParts)
+
+      toast.info(
+        `📏 ความกว้างมาตรฐาน: ${standardWidth}px | ความสูงรวม: ${totalChapterHeight.toLocaleString()}px (${totalPages} ชิ้น) ➔ ซอยเป็น ${totalParts} หน้า (~${pageTargetHeight.toLocaleString()}px/หน้า)`
+      )
 
       let lastFolderUrl = ""
 
-      // 2. Loop through each part
+      // 4. Continuous Vertical Slicing into 20 balanced pages (001.webp - 020.webp)
       for (let partIdx = 0; partIdx < totalParts; partIdx++) {
-        let startIdx = 0
-        let endIdx = 0
-        if (stitchMode === "slices20") {
-          startIdx = partIdx * 20
-          endIdx = Math.min((partIdx + 1) * 20, totalPages)
-        } else {
-          startIdx = Math.round((partIdx * totalPages) / totalParts)
-          endIdx = Math.round(((partIdx + 1) * totalPages) / totalParts)
-        }
-
         const partNum = partIdx + 1
-        const sliceCount = endIdx - startIdx
-        const partRange = `หน้า ${partNum}/${totalParts} (ชิ้นที่ ${startIdx + 1} - ${endIdx})`
+        const yPageStart = partIdx * pageTargetHeight
+        const yPageEnd = Math.min((partIdx + 1) * pageTargetHeight, totalChapterHeight)
+        const canvasH = yPageEnd - yPageStart
+
+        if (canvasH <= 0) continue
+
+        const partRange = `หน้า ${partNum}/${totalParts} (Y: ${yPageStart.toLocaleString()} - ${yPageEnd.toLocaleString()}px, สูง ${canvasH.toLocaleString()}px)`
 
         setStitchProgress((prev) => ({
           currentPart: partNum,
           totalParts,
           pageRange: partRange,
           percent: Math.round((partIdx / totalParts) * 100),
-          statusText: `กำลังโหลดและเย็บไฟล์ ${String(partNum).padStart(3, "0")}.webp (หน้าที่ ${partNum} จาก ${totalParts} หน้า, รวม ${sliceCount} ชิ้น)...`,
+          statusText: `กำลังเย็บและเรนเดอร์หน้า ${String(partNum).padStart(3, "0")}.webp (${canvasH.toLocaleString()}px จากทั้งหมด ${totalChapterHeight.toLocaleString()}px)...`,
           liveCanvasPreview: prev?.liveCanvasPreview,
         }))
 
-        // 2.1 Load images in this part
-        const partUrls = rawUrls.slice(startIdx, endIdx)
-        const loadedResults = await Promise.all(
-          partUrls.map((u) =>
-            loadThunderScansImageElement(u, (notice) => {
-              setStitchProgress((prev) => (prev ? { ...prev, statusText: notice } : null))
-            })
-          )
-        )
-        const loadedImages = loadedResults.filter((img): img is HTMLImageElement => img !== null)
-        if (!loadedImages.length) {
-          throw new Error(`ไม่สามารถโหลดชิ้นภาพสำหรับหน้าที่ ${partNum} (${partRange}) ได้ กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ตหรือดึงภาพใหม่อีกครั้ง`)
-        }
-
-        // 2.2 Scale images to match standardWidth
-        let totalHeight = 0
-        const scaledItems = loadedImages.map((img) => {
-          const scale = standardWidth / img.naturalWidth
-          const scaledH = Math.round(img.naturalHeight * scale)
-          totalHeight += scaledH
-          return { img, scaledH }
-        })
-
-        // WebP has a maximum canvas height limit of 16,383px; use JPEG if exceeded
-        const useJpeg = totalHeight > 16000
-        const fileName = `${String(partNum).padStart(3, "0")}.${useJpeg ? "jpg" : "webp"}`
-        const mimeType = useJpeg ? "image/jpeg" : "image/webp"
-
-        // 2.3 Create Canvas and draw slices sequentially
+        // 4.1 Create Canvas for this page
         const canvas = document.createElement("canvas")
         canvas.width = standardWidth
-        canvas.height = totalHeight
+        canvas.height = canvasH
         const ctx = canvas.getContext("2d")
         if (!ctx) throw new Error("ไม่สามารถสร้าง 2D Canvas ได้")
 
         ctx.imageSmoothingEnabled = true
         ctx.imageSmoothingQuality = "high"
 
-        let currentY = 0
-        for (const item of scaledItems) {
-          ctx.drawImage(item.img, 0, currentY, standardWidth, item.scaledH)
-          currentY += item.scaledH
+        // 4.2 Draw all slices that overlap with [yPageStart, yPageEnd]
+        for (const slice of sliceLayouts) {
+          if (slice.yBottom <= yPageStart || slice.yTop >= yPageEnd) {
+            continue
+          }
+
+          const yOverlapStart = Math.max(slice.yTop, yPageStart)
+          const yOverlapEnd = Math.min(slice.yBottom, yPageEnd)
+          const drawH = yOverlapEnd - yOverlapStart
+
+          if (drawH <= 0) continue
+
+          // Destination coordinates on Canvas
+          const dy = yOverlapStart - yPageStart
+          const dh = drawH
+          const dx = 0
+          const dw = standardWidth
+
+          // Source coordinates on the raw slice image
+          const sliceTopOffset = yOverlapStart - slice.yTop
+          const sy = sliceTopOffset / slice.scale
+          const sh = drawH / slice.scale
+          const sx = 0
+          const sw = slice.img.naturalWidth
+
+          ctx.drawImage(slice.img, sx, sy, sw, sh, dx, dy, dw, dh)
         }
 
-        // Generate small live canvas preview thumbnail
+        // 4.3 Generate small live canvas preview thumbnail
         let thumbnailDataUrl: string | undefined
         try {
           const thumbCanvas = document.createElement("canvas")
           thumbCanvas.width = 160
-          thumbCanvas.height = Math.round((totalHeight / standardWidth) * 160)
+          thumbCanvas.height = Math.round((canvasH / standardWidth) * 160)
           const thumbCtx = thumbCanvas.getContext("2d")
           if (thumbCtx) {
             thumbCtx.drawImage(canvas, 0, 0, thumbCanvas.width, thumbCanvas.height)
@@ -565,7 +593,11 @@ export function ThunderScansModal({
           }
         } catch {}
 
-        // 2.4 Export blob
+        // 4.4 Export blob
+        const useJpeg = canvasH > 16000
+        const fileName = `${String(partNum).padStart(3, "0")}.${useJpeg ? "jpg" : "webp"}`
+        const mimeType = useJpeg ? "image/jpeg" : "image/webp"
+
         const blob = await new Promise<Blob>((resolve, reject) => {
           canvas.toBlob(
             (b) => (b ? resolve(b) : reject(new Error(`สร้าง ${useJpeg ? "JPEG" : "WebP"} blob ไม่สำเร็จ`))),
@@ -578,7 +610,7 @@ export function ThunderScansModal({
         canvas.width = 0
         canvas.height = 0
 
-        // 2.5 Convert to Base64
+        // 4.5 Convert to Base64
         const base64Data = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader()
           reader.onloadend = () => resolve(reader.result as string)
@@ -586,13 +618,13 @@ export function ThunderScansModal({
           reader.readAsDataURL(blob)
         })
 
-        // 2.6 Upload chunk to Google Drive
+        // 4.6 Upload chunk to Google Drive
         setStitchProgress({
           currentPart: partNum,
           totalParts,
           pageRange: partRange,
           percent: Math.round(((partIdx + 0.6) / totalParts) * 100),
-          statusText: `กำลังอัปโหลด ${fileName} ขึ้น แปลจนเมื่อย...`,
+          statusText: `กำลังอัปโหลด ${fileName} (${canvasH.toLocaleString()}px) ขึ้น แปลจนเมื่อย...`,
           liveCanvasPreview: thumbnailDataUrl,
         })
 
@@ -659,13 +691,13 @@ export function ThunderScansModal({
       setStitchProgress({
         currentPart: totalParts,
         totalParts,
-        pageRange: `ครบทั้ง ${totalPages} ชิ้นภาพ`,
+        pageRange: `ครบทั้ง ${totalParts} หน้าพอดี (ความสูงรวม ${totalChapterHeight.toLocaleString()}px)`,
         percent: 100,
-        statusText: `คำนวณและอัปโหลดรวมเป็น ${totalParts} หน้าเสร็จสิ้นแล้ว และนำเข้า WorkQueue อัตโนมัติ!`,
+        statusText: `เย็บแนวตั้งและซอยเป็น ${totalParts} หน้ามาตรฐานเสร็จสิ้นแล้ว! นำเข้า WorkQueue อัตโนมัติ`,
         folderUrl: lastFolderUrl || `https://drive.google.com/drive/folders/${DRIVE_ROOT_FOLDER_ID}`,
       })
 
-      toast.success(`🎉 เย็บรวมภาพเป็น ${totalParts} หน้า และบันทึกลง แปลจนเมื่อย สำเร็จ!`)
+      toast.success(`🎉 เย็บต่อเนื่องและแบ่งเป็น ${totalParts} หน้า (001.webp - ${String(totalParts).padStart(3, "0")}.webp) บันทึกลง แปลจนเมื่อย สำเร็จ!`)
       if (onSuccess) onSuccess()
     } catch (err: any) {
       console.error("handleStitchAndUpload error:", err)
@@ -873,7 +905,7 @@ export function ThunderScansModal({
                       </div>
                       <p className="text-xs text-slate-400 mt-1">
                         สกัดพบชิ้นส่วนภาพทั้งหมด: <strong className="text-amber-400 font-semibold">{testResult.imagesCount} ชิ้น</strong>{" "}
-                        (จะรวมเย็บเป็น <strong className="text-emerald-400 font-semibold">20 หน้ามาตรฐาน</strong>)
+                        (จะเย็บแนวตั้งต่อเนื่องแล้วซอยแบ่งเป็น <strong className="text-emerald-400 font-semibold">20 หน้ามาตรฐานพอดี</strong> 001.webp - 020.webp)
                       </p>
                     </div>
 
@@ -890,7 +922,7 @@ export function ThunderScansModal({
                                 : "text-slate-400 hover:text-slate-200"
                             }`}
                           >
-                            แบ่งเป็น 20 หน้า (20 ไฟล์)
+                            ซอยแบ่งเป็น 20 หน้า (20 ไฟล์)
                           </button>
                           <button
                             type="button"
@@ -915,7 +947,7 @@ export function ThunderScansModal({
                           {stitching
                             ? "กำลังเย็บและอัปโหลด..."
                             : stitchMode === "total20"
-                            ? "เย็บแบ่งเป็น 20 หน้า & ส่งขึ้น Drive"
+                            ? "เย็บซอยเป็น 20 หน้าพอดี & ส่งขึ้น Drive"
                             : "เย็บไฟล์ละ 20 ชิ้น & ส่งขึ้น Drive"}
                         </Button>
                       </div>
