@@ -151,28 +151,54 @@ export async function fetchRemoteVersion(
 }
 
 /**
- * Check if the remote version is newer or different from the current loaded bundle.
+ * Parse an ISO date string, Unix timestamp string, or epoch number into a millisecond timestamp.
+ * Returns NaN if unparseable or invalid.
  */
-export function isNewerVersion(remote: AppVersionInfo | null): boolean {
-  if (!remote || !remote.buildTime) return false
+export function parseTimestamp(val: unknown): number {
+  if (typeof val === "number") return val
+  if (typeof val === "string") {
+    // If string consists only of digits (Unix epoch ms)
+    if (/^\d+$/.test(val.trim())) {
+      const num = Number(val.trim())
+      if (!isNaN(num)) return num
+    }
+    const parsed = Date.parse(val)
+    if (!isNaN(parsed)) return parsed
+  }
+  return NaN
+}
 
-  // In local development or unbundled mode, skip mismatch detection
+/**
+ * Pure chronological version comparator between current running bundle and remote manifest.
+ * Guarantees that:
+ * 1. Newer remote buildTime returns true.
+ * 2. Older/equal remote buildTime returns false (prevents lagging CDN downgrade loops).
+ * 3. Invalid/unparseable remote buildTime when current buildTime is valid returns false (prevents corrupt manifest loops).
+ * 4. Dev mode returns false.
+ */
+export function compareAppVersions(
+  current: Partial<AppVersionInfo> | null | undefined,
+  remote: Partial<AppVersionInfo> | null | undefined,
+  isDev = false
+): boolean {
+  if (!remote || !remote.buildTime) return false
   if (
-    CURRENT_BUILD_TIME === "dev" ||
+    isDev ||
+    !current ||
+    current.buildTime === "dev" ||
+    current.version === "dev" ||
     remote.buildTime === "dev" ||
-    remote.version === "dev" ||
-    CURRENT_BUILD_VERSION === "dev" ||
-    (typeof import.meta !== "undefined" && import.meta.env?.DEV)
+    remote.version === "dev"
   ) {
     return false
   }
 
-  // Parse ISO build times for chronological comparison
-  const remoteTime = Date.parse(remote.buildTime)
-  const currentTime = Date.parse(CURRENT_BUILD_TIME)
+  // Parse ISO build times or timestamps for chronological comparison
+  const remoteTime = parseTimestamp(remote.buildTime)
+  const currentTime = parseTimestamp(current.buildTime)
 
   if (!isNaN(remoteTime) && !isNaN(currentTime)) {
-    // If remote build is newer than currently running bundle
+    // If remote build is strictly newer than currently running bundle
     if (remoteTime > currentTime) {
       return true
     }
@@ -182,30 +208,79 @@ export function isNewerVersion(remote: AppVersionInfo | null): boolean {
     }
   }
 
+  // If current build time is valid but remote timestamp is corrupted/unparseable, reject update
+  if (!isNaN(currentTime) && isNaN(remoteTime)) {
+    return false
+  }
+
   // Fallback for non-standard timestamp strings
-  if (CURRENT_BUILD_TIME !== remote.buildTime) {
+  if (
+    current.buildTime !== remote.buildTime &&
+    isNaN(currentTime) &&
+    isNaN(remoteTime)
+  ) {
     return true
   }
 
   // Check version ID mismatch if not "dev"
   if (
-    CURRENT_BUILD_VERSION !== "dev" &&
+    current.version &&
+    current.version !== "dev" &&
     remote.version &&
-    CURRENT_BUILD_VERSION !== remote.version
+    current.version !== remote.version
   ) {
     return true
   }
 
   // Check commit mismatch if available
   if (
-    CURRENT_COMMIT !== "dev" &&
+    current.commit &&
+    current.commit !== "dev" &&
+    remote.commit &&
     remote.commit !== "dev" &&
-    CURRENT_COMMIT !== remote.commit
+    current.commit !== remote.commit
   ) {
     return true
   }
 
   return false
+}
+
+/**
+ * Helper to check if a target version has already been processed by storage or URL query param,
+ * accommodating both bare tokens ('v2') and timestamped user-reload tokens ('v2_1730434000').
+ */
+export function isReloadTargeted(
+  targetVersion: string | undefined | null,
+  lastReloaded: string | null,
+  currentQueryV: string | null
+): boolean {
+  if (!targetVersion) return false
+  if (lastReloaded === targetVersion) return true
+  if (currentQueryV === targetVersion) return true
+  if (currentQueryV && currentQueryV.startsWith(`${targetVersion}_`)) return true
+  return false
+}
+
+/**
+ * Check if the remote version is newer or different from the current loaded bundle.
+ */
+export function isNewerVersion(remote: AppVersionInfo | null): boolean {
+  const isDev =
+    CURRENT_BUILD_TIME === "dev" ||
+    CURRENT_BUILD_VERSION === "dev" ||
+    (typeof import.meta !== "undefined" && Boolean(import.meta.env?.DEV))
+
+  return compareAppVersions(
+    {
+      version: CURRENT_BUILD_VERSION,
+      buildTime: CURRENT_BUILD_TIME,
+      commit: CURRENT_COMMIT,
+      packageVersion: CURRENT_PACKAGE_VERSION,
+    },
+    remote,
+    isDev
+  )
 }
 
 /**
@@ -224,13 +299,19 @@ export function forceCacheBustingReload(
     safeSetStorage(LAST_RELOADED_KEY, versionKey)
 
     const url = new URL(window.location.href)
-    // For automated mount reload, skip if query already contains this exact version to prevent infinite loops
-    if (!isUserInitiated && url.searchParams.get("_v") === versionKey) {
+    const currentV = url.searchParams.get("_v")
+
+    // For automated mount reload, skip if query already contains this exact version or timestamped version
+    if (!isUserInitiated && isReloadTargeted(versionKey, null, currentV)) {
       console.warn(
         `[VersionManager] Automated reload with target version ${versionKey} already performed. Skipping duplicate loop.`
       )
       return
     }
+
+    // Clean any prior temporary tokens
+    url.searchParams.delete("_reload")
+    url.searchParams.delete("_t")
 
     // For user clicks or fresh target, append timestamp to guarantee edge CDN and browser cache bypass
     const finalParam = isUserInitiated
@@ -238,6 +319,14 @@ export function forceCacheBustingReload(
       : versionKey
 
     url.searchParams.set("_v", finalParam)
+
+    if (isUserInitiated) {
+      toast.loading("กำลังโหลด MangaHub เวอร์ชันล่าสุด...", {
+        id: "mgh-app-reload",
+        duration: 3000,
+      })
+    }
+
     window.location.replace(url.toString())
   } catch {
     try {
@@ -327,11 +416,11 @@ export function useVersionWatcher(options: UseVersionWatcherOptions = {}) {
               currentParamV = new URL(window.location.href).searchParams.get("_v")
             } catch {}
 
-            if (
-              lastReloaded !== remote.version &&
-              lastReloaded !== remote.buildTime &&
-              currentParamV !== remote.version
-            ) {
+            const alreadyTargeted =
+              isReloadTargeted(remote.version, lastReloaded, currentParamV) ||
+              isReloadTargeted(remote.buildTime, lastReloaded, currentParamV)
+
+            if (!alreadyTargeted) {
               console.info(
                 `[VersionManager] Stale cache detected on mount (${CURRENT_BUILD_TIME} vs ${remote.buildTime}). Auto-refreshing...`
               )
@@ -354,8 +443,8 @@ export function useVersionWatcher(options: UseVersionWatcherOptions = {}) {
               duration: 15000,
             })
           }
-        } else {
-          // We are on latest version: clean up session storage flag and any leftover _v param in URL
+        } else if (remote) {
+          // We are confirmed on latest version: clean up session storage flag and any leftover _v param in URL
           safeRemoveStorage(LAST_RELOADED_KEY)
           cleanCacheBustingParams()
         }

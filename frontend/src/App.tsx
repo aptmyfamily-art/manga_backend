@@ -16,6 +16,8 @@ import { FinancialsView } from "@/components/views/FinancialsView"
 import { BudgetView } from "@/components/views/BudgetView"
 import { MangaSettingsView } from "@/components/views/MangaSettingsView"
 import { ConnectorsView } from "@/components/views/ConnectorsView"
+import { KuaikanCoinWarningBanner } from "@/components/ui/KuaikanCoinWarningBanner"
+import { KuaikanCoinHeaderBadge } from "@/components/ui/KuaikanCoinHeaderBadge"
 import { MangaModal } from "@/components/modals/MangaModal"
 import { KuaiKanLoginModal } from "@/components/modals/KuaiKanLoginModal"
 import {
@@ -109,7 +111,11 @@ export default function App() {
     setActiveView(view)
     const targetPath = `/${view}`
     if (window.location.pathname !== targetPath) {
-      window.history.pushState(null, "", targetPath)
+      try {
+        window.history.pushState(null, "", targetPath)
+      } catch {
+        // Sandboxed or restricted environment fallback
+      }
     }
     // Check for updates when navigating views (e.g. going to connectors)
     checkVersion()
@@ -128,7 +134,11 @@ export default function App() {
     if (window.location.pathname === "/" || window.location.pathname === "") {
       const search = window.location.search || ""
       const hash = window.location.hash || ""
-      window.history.replaceState(null, "", `/${activeView}${search}${hash}`)
+      try {
+        window.history.replaceState(null, "", `/${activeView}${search}${hash}`)
+      } catch {
+        // Sandboxed or restricted environment fallback
+      }
     }
   }, [activeView])
 
@@ -536,6 +546,9 @@ export default function App() {
               </Button>
             )}
 
+            {/* Emergency KuaiKan Coin Warning Badge in Header */}
+            <KuaikanCoinHeaderBadge onClick={() => changeView("connectors")} />
+
             <Button
               variant="outline"
               size="sm"
@@ -561,6 +574,11 @@ export default function App() {
           </div>
         </header>
 
+        {/* Global Emergency Warning Banner: KuaiKan Insufficient Coins */}
+        <KuaikanCoinWarningBanner
+          onNavigateConnectors={() => changeView("connectors")}
+        />
+
         {/* View Container */}
         <main className="flex-1 p-4 sm:p-8 max-w-[1600px] w-full mx-auto">
           {activeView === "dashboard" && (
@@ -577,6 +595,7 @@ export default function App() {
                 setUpdateQueueOpen(true)
               }}
               onManualRefresh={handleManualRefresh}
+              onSwitchToConnectors={() => changeView("connectors")}
             />
           )}
 

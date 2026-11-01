@@ -3,6 +3,14 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import assert from 'assert'
 
+// DIRECTLY IMPORT PRODUCTION MODULE UNDER TEST
+import {
+  compareAppVersions,
+  isReloadTargeted,
+  parseTimestamp,
+  getVersionEndpoint,
+} from './src/lib/versionManager.ts'
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const distDir = path.resolve(__dirname, 'dist')
 
@@ -46,22 +54,11 @@ console.log('✓ Test 3 Passed: 404.html contains anti-caching meta tags')
 
 // Test 4: Base URL Endpoint Resolution with trailing slashes and subpaths
 console.log('\n[Test 4] Testing getVersionEndpoint() resolution logic across routes...')
-function testGetVersionEndpoint(base) {
-  const envBase = base || '/'
-  if (envBase.startsWith('/')) {
-    const cleanBase = envBase.replace(/\/+$/, '')
-    return `${cleanBase}/version.json`
-  }
-  return '/version.json'
-}
-
-assert.strictEqual(testGetVersionEndpoint('./'), '/version.json', 'Relative ./ base MUST resolve to root /version.json')
-assert.strictEqual(testGetVersionEndpoint('/'), '/version.json', 'Root / base MUST resolve to /version.json')
-assert.strictEqual(testGetVersionEndpoint('/manga_backend/'), '/manga_backend/version.json', 'Subpath base MUST resolve to /manga_backend/version.json')
+assert.strictEqual(getVersionEndpoint(), '/version.json', 'Default/relative base MUST resolve to root /version.json')
 
 // Trailing slash resolution test in URL
 const trailingSlashRoute = 'https://mangahub888.github.io/connectors/'
-const endpoint = testGetVersionEndpoint('./')
+const endpoint = getVersionEndpoint()
 const resolvedUrl = new URL(endpoint, trailingSlashRoute).href
 assert.strictEqual(resolvedUrl, 'https://mangahub888.github.io/version.json', 'Trailing slash route /connectors/ with root endpoint MUST resolve to root /version.json, not /connectors/version.json')
 console.log('✓ Test 4 Passed: Absolute endpoint resolution prevents trailing slash 404s')
@@ -101,110 +98,66 @@ assert(jsContent.includes('ThunderScans EN'), 'Compiled bundle MUST include "Thu
 assert(jsContent.includes('en-thunderscans.com'), 'Compiled bundle MUST include "en-thunderscans.com"')
 console.log(`✓ Test 6 Passed: "${jsBundle}" contains ThunderScans EN connector card`)
 
-// Test 7: Verify version comparison logic and dev-mode isolation
-console.log('\n[Test 7] Testing isNewerVersion chronological ordering, edge cases & dev-mode isolation...')
-function isNewerVersion(currentBuildTime, currentVersion, currentCommit, isDev, remote) {
-  if (!remote || !remote.buildTime) return false
-  if (
-    currentBuildTime === 'dev' ||
-    remote.buildTime === 'dev' ||
-    remote.version === 'dev' ||
-    currentVersion === 'dev' ||
-    isDev
-  ) {
-    return false
-  }
+// Test 7: Verify production compareAppVersions logic with live module imports
+console.log('\n[Test 7] Testing production compareAppVersions chronological ordering & edge cases...')
 
-  // Parse ISO build times for chronological comparison
-  const remoteTime = Date.parse(remote.buildTime)
-  const currentTime = Date.parse(currentBuildTime)
-
-  if (!isNaN(remoteTime) && !isNaN(currentTime)) {
-    if (remoteTime > currentTime) return true
-    if (remoteTime <= currentTime) return false
-  }
-
-  if (currentBuildTime !== remote.buildTime) return true
-  if (currentVersion !== 'dev' && remote.version && currentVersion !== remote.version) return true
-  if (currentCommit !== 'dev' && remote.commit !== 'dev' && currentCommit !== remote.commit) return true
-  return false
+const currentStandard = {
+  version: '100',
+  commit: 'ab24b87',
+  packageVersion: '2.0.0',
+  buildTime: '2026-11-01T04:00:00Z',
 }
 
 // Case A: Identical version
-assert.strictEqual(isNewerVersion('2026-11-01T04:00:00Z', '100', 'ab24b87', false, { buildTime: '2026-11-01T04:00:00Z', version: '100', commit: 'ab24b87' }), false)
+assert.strictEqual(compareAppVersions(currentStandard, { buildTime: '2026-11-01T04:00:00Z', version: '100', commit: 'ab24b87' }), false)
 
 // Case B: Newer buildTime
-assert.strictEqual(isNewerVersion('2026-11-01T04:00:00Z', '100', 'ab24b87', false, { buildTime: '2026-11-01T04:10:00Z', version: '101', commit: 'ab24b87' }), true)
+assert.strictEqual(compareAppVersions(currentStandard, { buildTime: '2026-11-01T04:10:00Z', version: '101', commit: 'ab24b87' }), true)
 
 // Case C: Older buildTime from lagging CDN edge node (CRITICAL EDGE CASE: MUST NOT DOWNGRADE)
-assert.strictEqual(isNewerVersion('2026-11-01T04:30:00Z', '102', 'cd45e67', false, { buildTime: '2026-11-01T04:10:00Z', version: '101', commit: 'ab24b87' }), false, 'Lagging CDN edge with older buildTime must NOT trigger update')
+assert.strictEqual(compareAppVersions({ ...currentStandard, buildTime: '2026-11-01T04:30:00Z' }, { buildTime: '2026-11-01T04:10:00Z', version: '101', commit: 'ab24b87' }), false, 'Lagging CDN edge with older buildTime must NOT trigger update')
 
 // Case D: Vite DEV mode bypass (must never alert in dev)
-assert.strictEqual(isNewerVersion('2026-11-01T04:00:00Z', '100', 'ab24b87', true, { buildTime: '2026-11-01T04:10:00Z', version: '101', commit: 'cd45e67' }), false)
+assert.strictEqual(compareAppVersions(currentStandard, { buildTime: '2026-11-01T04:10:00Z', version: '101', commit: 'cd45e67' }, true), false)
 
 // Case E: Remote version is "dev"
-assert.strictEqual(isNewerVersion('2026-11-01T04:00:00Z', '100', 'ab24b87', false, { buildTime: '2026-11-01T04:10:00Z', version: 'dev', commit: 'dev' }), false)
+assert.strictEqual(compareAppVersions(currentStandard, { buildTime: '2026-11-01T04:10:00Z', version: 'dev', commit: 'dev' }), false)
 
 // Case F: Null / empty remote
-assert.strictEqual(isNewerVersion('2026-11-01T04:00:00Z', '100', 'ab24b87', false, null), false)
-assert.strictEqual(isNewerVersion('2026-11-01T04:00:00Z', '100', 'ab24b87', false, {}), false)
+assert.strictEqual(compareAppVersions(currentStandard, null), false)
+assert.strictEqual(compareAppVersions(currentStandard, {}), false)
 
-// Case G: Non-standard unparseable string fallback
-assert.strictEqual(isNewerVersion('custom-build-a', '100', 'ab24b87', false, { buildTime: 'custom-build-b', version: '101', commit: 'ab24b87' }), true)
+// Case G: Corrupted/unparseable remote buildTime when current is valid (MUST NOT ENTER RELOAD LOOP!)
+assert.strictEqual(compareAppVersions(currentStandard, { buildTime: 'invalid-corrupted-date', version: '101', commit: 'ab24b87' }), false, 'Corrupted remote buildTime must NOT trigger update loop')
 
-console.log('✓ Test 7 Passed: Version comparison chronological ordering & edge cases correctly handled')
+// Case H: Numeric Unix timestamp ms build times
+assert.strictEqual(compareAppVersions({ ...currentStandard, buildTime: '1793500000000' }, { buildTime: '1793509000000', version: '102' }), true)
+assert.strictEqual(compareAppVersions({ ...currentStandard, buildTime: '1793509000000' }, { buildTime: '1793500000000', version: '102' }), false)
 
-// Test 8: Verify storage resilience & user-initiated reload bypass
-console.log('\n[Test 8] Testing storage resilience, mount loop guard & user-initiated reload bypass...')
-function simulateMountReloadCheck(storageThrows, storedVersion, currentParamV, remoteVersion) {
-  let lastReloaded = null
-  try {
-    if (storageThrows) throw new Error('Access is denied')
-    lastReloaded = storedVersion
-  } catch {
-    lastReloaded = null
-  }
+// Case I: Non-standard unparseable string fallback when BOTH are non-standard
+assert.strictEqual(compareAppVersions({ ...currentStandard, buildTime: 'custom-build-a' }, { buildTime: 'custom-build-b', version: '101', commit: 'ab24b87' }), true)
 
-  // Reload condition for automated mount:
-  // If lastReloaded matches remoteVersion OR currentParamV already matches remoteVersion -> SKIP RELOAD
-  const shouldReload = (lastReloaded !== remoteVersion) && (currentParamV !== remoteVersion)
-  return shouldReload
-}
+console.log('✓ Test 7 Passed: Production compareAppVersions chronological ordering & edge cases correctly handled')
 
-function simulateForceReload(currentUrlStr, targetVersion, isUserInitiated) {
-  const url = new URL(currentUrlStr)
-  const versionKey = targetVersion || '123'
-
-  // Automated reload loop suppression
-  if (!isUserInitiated && url.searchParams.get('_v') === versionKey) {
-    return { reloaded: false, finalUrl: url.toString() }
-  }
-
-  // User-initiated or fresh token guarantees a unique query
-  const finalParam = isUserInitiated ? `${versionKey}_${Date.now()}` : versionKey
-  url.searchParams.set('_v', finalParam)
-  return { reloaded: true, finalUrl: url.toString() }
-}
+// Test 8: Verify storage resilience & isReloadTargeted helper
+console.log('\n[Test 8] Testing production isReloadTargeted & user-initiated reload bypass...')
 
 // Case 1: Fresh update, no prior reload -> Should reload
-assert.strictEqual(simulateMountReloadCheck(false, null, null, 'v2'), true, 'Should reload on new version')
+assert.strictEqual(isReloadTargeted('v2', null, null), false, 'Fresh version with no prior reload must not be targeted')
 
 // Case 2: Already reloaded, stored in sessionStorage -> Should NOT reload on mount
-assert.strictEqual(simulateMountReloadCheck(false, 'v2', null, 'v2'), false, 'Should not reload when already marked in storage')
+assert.strictEqual(isReloadTargeted('v2', 'v2', null), true, 'Targeted version stored in sessionStorage must be recognized')
 
-// Case 3: Storage blocked/disabled, but URL param _v=v2 is present -> Should NOT reload on mount (secondary guard!)
-assert.strictEqual(simulateMountReloadCheck(true, null, 'v2', 'v2'), false, 'Secondary URL query guard prevents loop even when storage throws')
+// Case 3: Storage blocked/disabled, but bare URL param _v=v2 is present -> Secondary guard
+assert.strictEqual(isReloadTargeted('v2', null, 'v2'), true, 'Bare query param _v=v2 must be recognized as targeted')
 
-// Case 4: Automated mount reload when URL already has _v=v2 -> Suppressed
-const autoRes = simulateForceReload('https://mangahub888.github.io/connectors?_v=v2', 'v2', false)
-assert.strictEqual(autoRes.reloaded, false, 'Automated reload must be suppressed to prevent loop')
+// Case 4: Storage blocked/disabled, but timestamped URL param _v=v2_1730434000 is present -> Secondary guard!
+assert.strictEqual(isReloadTargeted('v2', null, 'v2_1730434000'), true, 'Timestamped query param _v=v2_1730434000 must be recognized as targeted')
 
-// Case 5: User-initiated reload when URL already has _v=v2 -> MUST RELOAD with fresh timestamp!
-const userRes = simulateForceReload('https://mangahub888.github.io/connectors?_v=v2', 'v2', true)
-assert.strictEqual(userRes.reloaded, true, 'User click MUST force reload')
-assert(userRes.finalUrl.includes('_v=v2_'), 'User reload URL must contain unique timestamp token')
+// Case 5: URL param is for old version (_v=v1), remote is v2 -> Must allow reload!
+assert.strictEqual(isReloadTargeted('v2', null, 'v1_1730434000'), false, 'Older query param v1 must NOT match target v2')
 
-console.log('✓ Test 8 Passed: Secondary query guard prevents mount loops while user-initiated reload always executes')
+console.log('✓ Test 8 Passed: Production isReloadTargeted handles bare tokens, timestamped tokens, and version mismatches')
 
 // Test 9: Verify Root Path Normalization preserves search parameters
 console.log('\n[Test 9] Testing root path normalization query param preservation...')
@@ -229,7 +182,7 @@ assert.strictEqual(
 )
 console.log('✓ Test 9 Passed: Root path normalization correctly preserves search and hash')
 
-// Test 10: Verify Back/Forward Cache (bfcache) restoration & search param cleanup
+// Test 10: Verify Back/Forward Cache (bfcache) restoration & cleanCacheBustingParams
 console.log('\n[Test 10] Testing bfcache restoration & cleanCacheBustingParams...')
 function simulateCleanParams(urlStr) {
   const url = new URL(urlStr)
@@ -264,6 +217,16 @@ assert.strictEqual(simulatePageShow(false).shouldCheckStale, false, 'normal page
 
 console.log('✓ Test 10 Passed: Cache-busting param cleanup & bfcache handling verified')
 
+// Test 11: Verify parseTimestamp helper across all formats
+console.log('\n[Test 11] Testing parseTimestamp helper...')
+assert(!isNaN(parseTimestamp('2026-11-01T04:00:00Z')), 'ISO date string must be parsed')
+assert(!isNaN(parseTimestamp('1793500000000')), 'Epoch string must be parsed')
+assert(!isNaN(parseTimestamp(1793500000000)), 'Epoch number must be parsed')
+assert(isNaN(parseTimestamp('invalid')), 'Invalid string must return NaN')
+assert(isNaN(parseTimestamp(null)), 'Null must return NaN')
+assert(isNaN(parseTimestamp(undefined)), 'Undefined must return NaN')
+console.log('✓ Test 11 Passed: parseTimestamp handles ISO strings, epoch strings, numbers, and invalid data')
+
 console.log('\n================================================================')
-console.log('ALL 10 VERIFICATION CHECKS PASSED WITH 0 REGRESSIONS!')
+console.log('ALL 11 VERIFICATION CHECKS PASSED WITH 0 REGRESSIONS!')
 console.log('================================================================\n')
