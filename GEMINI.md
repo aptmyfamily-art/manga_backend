@@ -19,3 +19,10 @@ This repository follows the **Hierarchical Multi-Agent Architecture** establishe
    - The Main Lead (Parent Agent) MUST NOT execute dev code, run build/deploy commands, or scrape data directly.
    - The Main Lead MUST NOT poll subagent logs via shell commands (rely strictly on Antigravity's reactive wakeup and messages).
    - All technical tasks belong strictly to Sub-Agents. Main Lead handles orchestration and user reporting only.
+
+5. **Project State & Handover Reference**:
+   - Always read and follow [HANDOVER.md](./HANDOVER.md) for current implementation status and immediate next tasks.
+   - **WorkQueue Formatting Rule (ThunderScans & KuaiKan)**:
+     - 🔗 **Work Link (`worklink`)**: Must follow format `[อัป Raw] https://drive.google.com/drive/folders/...`
+     - **Upload Status (`uploadstatus`)**: Must be set to `เสร็จแล้ว`
+     - **Uploader Name (`uploadername`)**: Must be set to `Apt`
