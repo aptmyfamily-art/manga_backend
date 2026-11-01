@@ -3,7 +3,7 @@
  * -------------------------------------------------------------
  * เย็บภาพ 20 หน้า/ไฟล์ โดยกำหนดความกว้างเท่ากันทั้งหมด (อ้างอิงจากหน้า 30 หรือกึ่งกลาง)
  * และอัปโหลดขึ้น Google Drive โครงสร้าง:
- * แปลจนเมื่อย / {ชื่อเรื่อง} / {เลขตอน} / Part_01.webp, Part_02.webp, ...
+ * แปลจนเมื่อย / {ชื่อเรื่อง} / {เลขตอน} / 001.jpg, 002.jpg, ...
  *
  * การใช้งาน:
  *   node tools/stitch_and_upload.js [comicId] [mangaName] [chapter]
@@ -105,7 +105,7 @@ async function main() {
     const startIdx = partIdx * PAGES_PER_PART;
     const endIdx = Math.min((partIdx + 1) * PAGES_PER_PART, allImages.length);
     const partNum = partIdx + 1;
-    const fileName = `${String(partNum).padStart(3, '0')}.webp`;
+    const fileName = `${String(partNum).padStart(3, '0')}.jpg`;
     console.log(`\n[${partNum}/${totalParts}] กำลังเย็บภาพหน้า ${startIdx + 1} - ${endIdx}...`);
 
     const chunkUrls = allImages.slice(startIdx, endIdx);
@@ -151,7 +151,7 @@ async function main() {
         channels: 4,
         background: { r: 255, g: 255, b: 255, alpha: 1 }
       }
-    }).composite(composites).webp({ quality: 90 }).toBuffer();
+    }).composite(composites).jpeg({ quality: 90 }).toBuffer();
 
     console.log(`✓ เย็บสำเร็จ (${stitchedBuffer.length} bytes) กำลังอัปโหลดขึ้น Drive...`);
     const isLast = partIdx === totalParts - 1;
@@ -161,7 +161,7 @@ async function main() {
       partIndex: partNum,
       totalParts,
       fileName,
-      mimeType: 'image/webp',
+      mimeType: 'image/jpeg',
       base64Data: stitchedBuffer.toString('base64'),
       isLastPart: isLast,
       mangaId: '1'

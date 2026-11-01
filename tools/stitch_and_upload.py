@@ -168,17 +168,13 @@ def main():
             strip_canvas.paste(p_img, (0, current_y))
             current_y += p_img.height
 
-        # เลือกระหว่าง WebP หรือ JPEG ตามความสูง (WebP limit: 16,383px)
-        use_jpeg = total_height > 16000
-        ext = "jpg" if use_jpeg else "webp"
-        mime_type = "image/jpeg" if use_jpeg else "image/webp"
-        part_file_name = f"{part_num:03d}.{ext}"
+        # มาตรฐานบันทึกเป็น .jpg (image/jpeg) เสมอ
+        ext = "jpg"
+        mime_type = "image/jpeg"
+        part_file_name = f"{part_num:03d}.jpg"
 
         img_buf = io.BytesIO()
-        if use_jpeg:
-            strip_canvas.save(img_buf, format="JPEG", quality=88, optimize=True)
-        else:
-            strip_canvas.save(img_buf, format="WEBP", quality=92, method=4)
+        strip_canvas.save(img_buf, format="JPEG", quality=90, optimize=True)
         
         img_bytes = img_buf.getvalue()
         file_size_kb = len(img_bytes) / 1024

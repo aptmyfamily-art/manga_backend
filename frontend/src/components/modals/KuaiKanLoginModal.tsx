@@ -752,7 +752,7 @@ export function KuaiKanLoginModal({
           totalParts,
           pageRange: partRange,
           percent: Math.round((partIdx / totalParts) * 100),
-          statusText: `กำลังโหลดและเย็บไฟล์ ${String(partNum).padStart(3, "0")}.webp (หน้าที่ ${partNum} จากทั้งหมด ${totalParts} หน้า, รวม ${sliceCount} ชิ้น)...`,
+          statusText: `กำลังโหลดและเย็บไฟล์ ${String(partNum).padStart(3, "0")}.jpg (หน้าที่ ${partNum} จากทั้งหมด ${totalParts} หน้า, รวม ${sliceCount} ชิ้น)...`,
         })
 
         // 2.1 โหลดภาพใน Part นี้ (พร้อมระบบ Auto-Retry และ CDN Fallback)
@@ -779,10 +779,8 @@ export function KuaiKanLoginModal({
           return { img, scaledH }
         })
 
-        // หากความสูงเกิน 16,000px ใช้ JPEG เพื่อไม่ให้ติดลิมิต 16,383px ของ WebP spec
-        const useJpeg = totalHeight > 16000
-        const fileName = `${String(partNum).padStart(3, "0")}.${useJpeg ? "jpg" : "webp"}`
-        const mimeType = useJpeg ? "image/jpeg" : "image/webp"
+        const fileName = `${String(partNum).padStart(3, "0")}.jpg`
+        const mimeType = "image/jpeg"
 
         // 2.3 สร้าง Canvas แล้ววาดต่อกันลงมา
         const canvas = document.createElement("canvas")
@@ -800,12 +798,12 @@ export function KuaiKanLoginModal({
           currentY += item.scaledH
         }
 
-        // 2.4 ส่งออกเป็น Blob (JPEG หรือ WebP ตามความสูง)
+        // 2.4 ส่งออกเป็น Blob (JPEG)
         const blob = await new Promise<Blob>((resolve, reject) => {
           canvas.toBlob(
-            (b) => (b ? resolve(b) : reject(new Error(`สร้าง ${useJpeg ? "JPEG" : "WebP"} blob ไม่สำเร็จ`))),
+            (b) => (b ? resolve(b) : reject(new Error("สร้าง JPEG blob ไม่สำเร็จ"))),
             mimeType,
-            0.92
+            0.90
           )
         })
 

@@ -266,7 +266,7 @@ export function AutoRawPipelineModal({
       const partUrls = allUrls.slice(startIdx, endIdx)
 
       const partPercent = 10 + Math.round((partIdx / totalParts) * 80)
-      const fileNameDisplay = `${String(partNum).padStart(3, "0")}.webp`
+      const fileNameDisplay = `${String(partNum).padStart(3, "0")}.jpg`
 
       setTasks((prev) =>
         prev.map((t, idx) =>
@@ -300,9 +300,8 @@ export function AutoRawPipelineModal({
         return { img, scaledH }
       })
 
-      const useJpeg = totalHeight > 16000
-      const fileName = `${String(partNum).padStart(3, "0")}.${useJpeg ? "jpg" : "webp"}`
-      const mimeType = useJpeg ? "image/jpeg" : "image/webp"
+      const fileName = `${String(partNum).padStart(3, "0")}.jpg`
+      const mimeType = "image/jpeg"
 
       // 2.3 Draw to Canvas
       const canvas = document.createElement("canvas")
@@ -323,9 +322,9 @@ export function AutoRawPipelineModal({
       // 2.4 Blob to Base64
       const blob = await new Promise<Blob>((resolve, reject) => {
         canvas.toBlob(
-          (b) => (b ? resolve(b) : reject(new Error("สร้าง blob ภาพไม่สำเร็จ"))),
+          (b) => (b ? resolve(b) : reject(new Error("สร้าง JPEG blob ไม่สำเร็จ"))),
           mimeType,
-          0.92
+          0.90
         )
       })
       canvas.width = 0
@@ -546,7 +545,7 @@ export function AutoRawPipelineModal({
                   </Badge>
                 </DialogTitle>
                 <DialogDescription className="text-xs text-slate-400 mt-0.5">
-                  ดาวน์โหลด เย็บ 20 หน้า (001.webp - 020.webp) อัปขึ้น แปลจนเมื่อย และลงคิวงานอัตโนมัติ พร้อมพัก 5 นาทีระหว่างตอน
+                  ดาวน์โหลด เย็บ 20 หน้า (001.jpg - 020.jpg) อัปขึ้น แปลจนเมื่อย และลงคิวงานอัตโนมัติ พร้อมพัก 5 นาทีระหว่างตอน
                 </DialogDescription>
               </div>
             </div>

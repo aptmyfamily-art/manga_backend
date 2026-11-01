@@ -538,7 +538,7 @@ export function ThunderScansModal({
           totalParts,
           pageRange: partRange,
           percent: Math.round((partIdx / totalParts) * 100),
-          statusText: `กำลังเย็บและเรนเดอร์หน้า ${String(partNum).padStart(3, "0")}.webp (${canvasH.toLocaleString()}px จากทั้งหมด ${totalChapterHeight.toLocaleString()}px)...`,
+          statusText: `กำลังเย็บและเรนเดอร์หน้า ${String(partNum).padStart(3, "0")}.jpg (${canvasH.toLocaleString()}px จากทั้งหมด ${totalChapterHeight.toLocaleString()}px)...`,
           liveCanvasPreview: prev?.liveCanvasPreview,
         }))
 
@@ -594,15 +594,14 @@ export function ThunderScansModal({
         } catch {}
 
         // 4.4 Export blob
-        const useJpeg = canvasH > 16000
-        const fileName = `${String(partNum).padStart(3, "0")}.${useJpeg ? "jpg" : "webp"}`
-        const mimeType = useJpeg ? "image/jpeg" : "image/webp"
+        const fileName = `${String(partNum).padStart(3, "0")}.jpg`
+        const mimeType = "image/jpeg"
 
         const blob = await new Promise<Blob>((resolve, reject) => {
           canvas.toBlob(
-            (b) => (b ? resolve(b) : reject(new Error(`สร้าง ${useJpeg ? "JPEG" : "WebP"} blob ไม่สำเร็จ`))),
+            (b) => (b ? resolve(b) : reject(new Error("สร้าง JPEG blob ไม่สำเร็จ"))),
             mimeType,
-            0.92
+            0.90
           )
         })
 
@@ -697,7 +696,7 @@ export function ThunderScansModal({
         folderUrl: lastFolderUrl || `https://drive.google.com/drive/folders/${DRIVE_ROOT_FOLDER_ID}`,
       })
 
-      toast.success(`🎉 เย็บต่อเนื่องและแบ่งเป็น ${totalParts} หน้า (001.webp - ${String(totalParts).padStart(3, "0")}.webp) บันทึกลง แปลจนเมื่อย สำเร็จ!`)
+      toast.success(`🎉 เย็บต่อเนื่องและแบ่งเป็น ${totalParts} หน้า (001.jpg - ${String(totalParts).padStart(3, "0")}.jpg) บันทึกลง แปลจนเมื่อย สำเร็จ!`)
       if (onSuccess) onSuccess()
     } catch (err: any) {
       console.error("handleStitchAndUpload error:", err)
@@ -905,7 +904,7 @@ export function ThunderScansModal({
                       </div>
                       <p className="text-xs text-slate-400 mt-1">
                         สกัดพบชิ้นส่วนภาพทั้งหมด: <strong className="text-amber-400 font-semibold">{testResult.imagesCount} ชิ้น</strong>{" "}
-                        (จะเย็บแนวตั้งต่อเนื่องแล้วซอยแบ่งเป็น <strong className="text-emerald-400 font-semibold">20 หน้ามาตรฐานพอดี</strong> 001.webp - 020.webp)
+                        (จะเย็บแนวตั้งต่อเนื่องแล้วซอยแบ่งเป็น <strong className="text-emerald-400 font-semibold">20 หน้ามาตรฐานพอดี</strong> 001.jpg - 020.jpg)
                       </p>
                     </div>
 
