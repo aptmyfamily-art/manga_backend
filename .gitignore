@@ -9,3 +9,5 @@ downloads/
 temp_*
 frontend/public/version.json
 .agents/
+__pycache__/
+*.pyc

@@ -34,9 +34,16 @@
 
 ## 2. แผนงานลุยต่อพรุ่งนี้ (Tomorrow's Roadmap)
 
-### 🚀 ภารกิจที่ 1: Playwright Headless Auto-Purchaser บน GitHub Actions (KuaiKan)
-- พัฒนาสคริปต์ Playwright Headless สำหรับจัดการตอนที่ติดเหรียญ/VIP Exclusive บน KuaiKan (เช่น ตอนที่ 22-23 *ยุคเปลี่ยนอาชีพฯ*)
-- ระบบอัตโนมัติในการคลิกปุ่ม `立即支付` เพื่อซื้อตอนและรับส่วนลด VIP 8.5 ส่วนลดอัตโนมัติ
+### 🚀 ภารกิจที่ 1: Playwright Headless Auto-Purchaser บน GitHub Actions (KuaiKan) [✅ เสร็จสมบูรณ์ 100%]
+- **พัฒนาเครื่องมือ:** `tools/kuaikan_playwright_purchaser.py` ด้วย Playwright Headless (Chromium / Edge fallback)
+- **ระบบ Auto-Purchase & VIP 8.5 Discount:**
+  - รองรับทั้ง Auto-Pay ทันที และการดักจับ Modal เพื่อคลิกปุ่ม `立即支付` พร้อมรับส่วนลด VIP 8.5 อัตโนมัติ (99 KK Coins -> 84 KK Coins)
+  - ดักจับ Network response จาก `/v2/comicbuy/encrypt_buy_h5` สกัดเลขออเดอร์และตัดยอดเหรียญแบบ Real-time
+- **ผลการทดสอบซื้อจริง (Real Execution Verified):**
+  - **ตอนที่ 23 *ยุคเปลี่ยนอาชีพฯ* (ComicID: 855786):** สั่งซื้อสำเร็จ Order #2759731020330113200 ปลดล็อคดึงภาพ Full HD ได้ **161 ภาพ** สมบูรณ์แบบ
+  - **ตอนที่ 22 *ยุคเปลี่ยนอาชีพฯ* (ComicID: 855785):** สั่งซื้อสำเร็จ Order #2759731915050653872 ปลดล็อคดึงภาพ Full HD ได้ **177 ภาพ** สมบูรณ์แบบ
+- **GitHub Actions Workflow:** จัดทำ `.github/workflows/kuaikan_auto_purchaser.yml` รองรับ Trigger ทั้ง Schedule (ทุก 4 ชม.) และ Manual Workflow Dispatch
+- **ยกระดับ Auto Raw Tracker:** เชื่อมต่อระบบ Playwright Escalation เข้ากับ `tools/auto_raw_tracker.py` และ `.github/workflows/auto_raw_tracker.yml` ปลดล็อคอัตโนมัติทันทีหากพบตอนติด Lock
 
 ### 🚀 ภารกิจที่ 2: GitHub Actions Pipeline & Auto-Purchase สำหรับ ThunderScans (en-thunder)
 - ออกแบบและสร้าง Roadmap 4 Phase สำหรับระบบซื้อตอนอัตโนมัติและดึง Raw ของ ThunderScans ผ่าน GitHub Actions Pipeline
