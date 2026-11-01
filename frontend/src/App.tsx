@@ -546,8 +546,8 @@ export default function App() {
               </Button>
             )}
 
-            {/* Emergency KuaiKan Coin Warning Badge in Header */}
-            <KuaikanCoinHeaderBadge onClick={() => changeView("connectors")} />
+            {/* KuaiKan VIP & Coin Status / Alert Badge in Header */}
+            <KuaikanCoinHeaderBadge onClick={() => setKuaikanModalOpen(true)} />
 
             <Button
               variant="outline"

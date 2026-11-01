@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { callGasApi } from "@/api/gasClient"
 import { toast } from "sonner"
+import { useQueryClient } from "@tanstack/react-query"
 import {
   Zap,
   RefreshCw,
@@ -29,6 +30,8 @@ import {
   Layers,
   AlertTriangle,
   Coins,
+  Crown,
+  User,
 } from "lucide-react"
 import { KuaikanCoinWarningBanner } from "@/components/ui/KuaikanCoinWarningBanner"
 import { notifyCoinAlertChange } from "@/lib/kuaikanCoinAlert"
@@ -180,15 +183,52 @@ export function KuaiKanLoginModal({
   const [htmlInput, setHtmlInput] = React.useState("")
   const [parsingHtml, setParsingHtml] = React.useState(false)
 
+  const queryClient = useQueryClient()
+
   // Session state
   const [loadingSession, setLoadingSession] = React.useState(false)
+  const [refreshingWallet, setRefreshingWallet] = React.useState(false)
   const [sessionStatus, setSessionStatus] = React.useState<{
     loggedIn: boolean
     isVip?: boolean
+    vipInfo?: {
+      isVip: boolean
+      vipType?: number
+      remainedDays?: number
+      expireDate?: string
+      raw?: any
+    } | null
+    coinBalance?: number | null
+    walletDetails?: any
+    user?: any
     updatedAt?: string
     cookiePreview?: string
     message?: string
   } | null>(null)
+
+  // Refresh VIP & Wallet status from KuaiKan server
+  const handleRefreshWallet = async () => {
+    setRefreshingWallet(true)
+    try {
+      const res = await callGasApi<any>("CHECK_KUAIKAN_WALLET")
+      if (res) {
+        setSessionStatus(res)
+        queryClient.invalidateQueries({ queryKey: ["kuaikanSessionAuth"] })
+        const coinCount =
+          res.coinBalance !== undefined && res.coinBalance !== null
+            ? Number(res.coinBalance).toLocaleString()
+            : "0"
+        const vipActive = res.isVip || res.vipInfo?.isVip
+        toast.success(
+          `อัปเดตข้อมูลสดแล้ว: ${vipActive ? "👑 VIP Active" : "VIP ปกติ"} • ยอดคงเหลือ ${coinCount} KK Coins`
+        )
+      }
+    } catch (err: any) {
+      toast.error("รีเฟรชสถานะ KuaiKan ไม่สำเร็จ: " + (err.message || ""))
+    } finally {
+      setRefreshingWallet(false)
+    }
+  }
 
   // QR Login state
   const [qrLoading, setQrLoading] = React.useState(false)
@@ -941,6 +981,123 @@ export function KuaiKanLoginModal({
         <div className="px-5 pt-3">
           <KuaikanCoinWarningBanner compact={true} />
         </div>
+
+        {/* Account Profile Card (When Logged In) */}
+        {sessionStatus?.loggedIn && (
+          <div className="px-5 pt-3">
+            <div className="rounded-xl border border-indigo-500/30 bg-gradient-to-br from-[#12192a] via-[#0d1424] to-[#141b2f] p-3.5 shadow-md space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                {/* User Info Avatar & Name */}
+                <div className="flex items-center gap-3 min-w-0">
+                  {sessionStatus.user?.avatar_url ? (
+                    <img
+                      src={sessionStatus.user.avatar_url}
+                      alt="KuaiKan User"
+                      className="w-10 h-10 rounded-full border-2 border-amber-400/50 object-cover shadow-sm shrink-0"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-amber-500/25 to-purple-600/35 border border-amber-400/40 flex items-center justify-center text-amber-300 shadow-sm shrink-0">
+                      <Crown className="h-5 w-5" />
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 font-bold text-white text-xs truncate">
+                      <span>{sessionStatus.user?.nickname || "บัญชี KuaiKan VIP"}</span>
+                      {sessionStatus.user?.uid && (
+                        <span className="text-[10px] text-slate-400 font-normal">
+                          (UID: {sessionStatus.user.uid})
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[10px] text-slate-400 truncate flex items-center gap-1.5">
+                      <span>
+                        {sessionStatus.cookiePreview ? `Cookie: ${sessionStatus.cookiePreview}` : "เชื่อมต่อแล้ว"}
+                      </span>
+                      {sessionStatus.updatedAt && (
+                        <>
+                          <span className="text-slate-600">•</span>
+                          <span className="text-slate-400">
+                            อัปเดต{" "}
+                            {new Date(sessionStatus.updatedAt).toLocaleTimeString("th-TH", {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}{" "}
+                            น.
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Actions: Refresh & Logout */}
+                <div className="flex items-center gap-2 shrink-0">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleRefreshWallet}
+                    disabled={refreshingWallet || loadingSession}
+                    className="h-7 text-xs border-indigo-500/40 bg-indigo-950/40 hover:bg-indigo-900/50 text-indigo-200 cursor-pointer flex items-center gap-1.5 shadow-xs transition-colors"
+                    title="ดึงสถานะ VIP และยอดเหรียญล่าสุดจาก KuaiKan ทันที"
+                  >
+                    <RefreshCw className={`h-3 w-3 ${refreshingWallet ? "animate-spin text-amber-400" : ""}`} />
+                    <span>รีเฟรชสถานะ VIP & เหรียญ</span>
+                  </Button>
+                  <button
+                    type="button"
+                    onClick={handleClearSession}
+                    className="h-7 px-2 rounded-md border border-slate-700/60 bg-slate-800/40 hover:bg-rose-950/50 text-slate-400 hover:text-rose-300 text-xs transition-colors cursor-pointer flex items-center gap-1"
+                    title="ออกจากระบบ KuaiKan"
+                  >
+                    <LogOut className="h-3 w-3" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Status Badges Row: VIP Status & Coin Balance */}
+              <div className="pt-2 border-t border-[#1e293b]/70 flex flex-wrap items-center gap-2">
+                {/* VIP Status Badge */}
+                {sessionStatus.isVip || sessionStatus.vipInfo?.isVip ? (
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold bg-gradient-to-r from-amber-500/20 via-purple-600/30 to-amber-500/15 border border-amber-400/50 text-amber-200 shadow-xs">
+                    <Crown className="h-3.5 w-3.5 text-amber-300 fill-amber-300/40 shrink-0" />
+                    <span>
+                      👑 สมาชิก VIP Active
+                      {sessionStatus.vipInfo?.remainedDays !== undefined ? (
+                        <span className="font-normal text-amber-200/90 ml-1">
+                          (เหลืออีก {sessionStatus.vipInfo.remainedDays} วัน
+                          {sessionStatus.vipInfo.expireDate ? ` • หมดอายุ ${sessionStatus.vipInfo.expireDate}` : ""}
+                          )
+                        </span>
+                      ) : sessionStatus.vipInfo?.expireDate ? (
+                        <span className="font-normal text-amber-200/90 ml-1">
+                          (หมดอายุ {sessionStatus.vipInfo.expireDate})
+                        </span>
+                      ) : null}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold bg-gradient-to-r from-slate-800/90 to-amber-950/40 border border-amber-500/30 text-amber-300 shadow-xs">
+                    <AlertTriangle className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                    <span>⚠️ VIP หมดอายุแล้ว</span>
+                  </div>
+                )}
+
+                {/* Coin Balance Badge */}
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold font-mono bg-[#131b2e] border border-amber-500/30 text-amber-300 shadow-xs">
+                  <Coins className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                  <span>
+                    🪙{" "}
+                    {sessionStatus.coinBalance !== null && sessionStatus.coinBalance !== undefined
+                      ? Number(sessionStatus.coinBalance).toLocaleString()
+                      : "0"}{" "}
+                    KK Coins
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Tab Navigation Switcher */}
         <div className="px-5 pt-3 pb-0 bg-[#0b101b]">

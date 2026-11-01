@@ -39,6 +39,7 @@ import {
   Tv,
   Scissors,
   Coins,
+  Crown,
 } from "lucide-react"
 import {
   normalizeKuaikanImageUrl,
@@ -64,6 +65,8 @@ export function ConnectorsView({ mangaList }: ConnectorsViewProps) {
     hasAlert: hasCoinAlert,
     alertInfo: coinAlertInfo,
     coinBalance,
+    vipInfo,
+    isVip: hookIsVip,
     triggerAlert: triggerCoinAlert,
     checkWallet: checkKuaikanWallet,
     checkingWallet,
@@ -827,10 +830,15 @@ export function ConnectorsView({ mangaList }: ConnectorsViewProps) {
                 <div>
                   <div className="flex items-center gap-2.5 flex-wrap">
                     <h3 className="text-lg font-bold text-white">KuaiKan Manhua (快看漫画)</h3>
-                    {sessionStatus?.loggedIn && sessionStatus.isVip ? (
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/20 px-2.5 py-0.5 text-xs font-semibold text-emerald-400 border border-emerald-500/30">
-                        <CheckCircle2 className="h-3.5 w-3.5" />
-                        VIP เชื่อมต่อแล้ว
+                    {sessionStatus?.loggedIn && (sessionStatus.isVip || vipInfo?.isVip || hookIsVip) ? (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-amber-500/20 via-purple-600/25 to-amber-500/10 px-2.5 py-0.5 text-xs font-semibold text-amber-300 border border-amber-500/30">
+                        <Crown className="h-3.5 w-3.5 text-amber-400" />
+                        👑 VIP Active {vipInfo?.remainedDays !== undefined && vipInfo.remainedDays > 0 ? `(${vipInfo.remainedDays} วัน)` : ""}
+                      </span>
+                    ) : sessionStatus?.loggedIn ? (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-800 px-2.5 py-0.5 text-xs font-semibold text-amber-300 border border-amber-500/30">
+                        <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
+                        ⚠️ VIP หมดอายุแล้ว
                       </span>
                     ) : (
                       <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/20 px-2.5 py-0.5 text-xs font-semibold text-amber-300 border border-amber-500/30">

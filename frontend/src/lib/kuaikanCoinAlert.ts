@@ -16,9 +16,18 @@ export interface KuaikanCoinAlertInfo {
   vipRequired?: boolean
 }
 
+export interface KuaikanVipInfo {
+  isVip: boolean
+  vipType?: number
+  remainedDays?: number
+  expireDate?: string
+  raw?: any
+}
+
 export interface KuaikanSessionAuthResponse {
   loggedIn: boolean
   isVip?: boolean
+  vipInfo?: KuaikanVipInfo | null
   updatedAt?: string
   cookiePreview?: string
   coinBalance?: number | null
@@ -27,6 +36,7 @@ export interface KuaikanSessionAuthResponse {
   coinAlert?: KuaikanCoinAlertInfo | null
   message?: string
   user?: any
+  walletDetails?: any
 }
 
 const STORAGE_COIN_ALERT_KEY = "mangahub_kuaikan_coin_alert"
@@ -218,6 +228,8 @@ export function useKuaikanCoinAlert() {
     hasAlert,
     alertInfo: effectiveAlert,
     sessionData,
+    vipInfo: sessionData?.vipInfo || null,
+    isVip: Boolean(sessionData?.isVip || sessionData?.vipInfo?.isVip),
     coinBalance: sessionData?.coinBalance ?? effectiveAlert?.currentBalance ?? null,
     isLoading: loadingSession || fetchingSession,
     checkingWallet,

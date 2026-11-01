@@ -3149,7 +3149,9 @@ function getKuaikanAuthStatus() {
       message: 'ยังไม่ได้เชื่อมต่อบัญชี KuaiKan',
       coinAlert: null,
       coinBalance: null,
-      insufficientCoins: false
+      insufficientCoins: false,
+      isVip: false,
+      vipInfo: null
     };
   }
 
@@ -3166,11 +3168,15 @@ function getKuaikanAuthStatus() {
     timestamp: session.coinAlertTimestamp || session.updatedAt || new Date().toISOString()
   } : null);
 
+  const isVip = Boolean(session.isVip || (session.vipInfo && session.vipInfo.isVip));
+
   return {
     loggedIn: true,
     updatedAt: session.updatedAt || '',
-    isVip: Boolean(session.isVip),
+    isVip: isVip,
+    vipInfo: session.vipInfo || null,
     user: session.user || null,
+    walletDetails: session.walletDetails || null,
     cookie: session.cookie || '',
     cookiePreview: session.cookie.substring(0, 20) + '...',
     coinBalance: session.coinBalance !== undefined ? session.coinBalance : null,
@@ -3284,7 +3290,7 @@ function checkKuaikanWalletStatus() {
       method: 'get',
       muteHttpExceptions: true,
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Referer': 'https://www.kuaikanmanhua.com/',
         'Cookie': session.cookie
       }
@@ -3292,8 +3298,43 @@ function checkKuaikanWalletStatus() {
     if (vipRes.getResponseCode() === 200) {
       const vData = JSON.parse(vipRes.getContentText());
       if (vData && vData.data && vData.data.vip) {
-        session.vipInfo = vData.data.vip;
-        session.isVip = Boolean(vData.data.vip.vip_type > 0 || (vData.data.vip.remained_days && vData.data.vip.remained_days > 0));
+        const rawVip = vData.data.vip;
+        const vipType = parseInt(rawVip.vip_type !== undefined ? rawVip.vip_type : (rawVip.vipType || 0), 10);
+        const remainedDays = parseInt(rawVip.remained_days !== undefined ? rawVip.remained_days : (rawVip.remainedDays || 0), 10);
+        const isVip = Boolean(vipType > 0 || remainedDays > 0 || rawVip.is_vip || rawVip.isVip);
+
+        // คำนวณหรือสกัดวันที่หมดอายุ (expireDate ในรูปแบบ DD/MM/YYYY)
+        let expireDateStr = '';
+        if (rawVip.expire_date || rawVip.expireDate) {
+          expireDateStr = String(rawVip.expire_date || rawVip.expireDate);
+        } else if (rawVip.expire_time || rawVip.expireTime || rawVip.end_time || rawVip.due_time) {
+          let ts = parseInt(rawVip.expire_time || rawVip.expireTime || rawVip.end_time || rawVip.due_time, 10);
+          if (ts < 10000000000) ts = ts * 1000;
+          const d = new Date(ts);
+          if (!isNaN(d.getTime())) {
+            const day = String(d.getDate()).padStart(2, '0');
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const year = d.getFullYear();
+            expireDateStr = `${day}/${month}/${year}`;
+          }
+        }
+
+        if (!expireDateStr && remainedDays > 0) {
+          const expDate = new Date(Date.now() + remainedDays * 24 * 60 * 60 * 1000);
+          const day = String(expDate.getDate()).padStart(2, '0');
+          const month = String(expDate.getMonth() + 1).padStart(2, '0');
+          const year = expDate.getFullYear();
+          expireDateStr = `${day}/${month}/${year}`;
+        }
+
+        session.isVip = isVip;
+        session.vipInfo = {
+          isVip: isVip,
+          vipType: isNaN(vipType) ? 0 : vipType,
+          remainedDays: isNaN(remainedDays) ? 0 : remainedDays,
+          expireDate: expireDateStr,
+          raw: rawVip
+        };
       }
     }
 
@@ -3902,15 +3943,20 @@ function saveKuaikanAuth(payload) {
 
   PropertiesService.getScriptProperties().setProperty(KUAIKAN_PROP_KEY, JSON.stringify(sessionData));
 
+  // ดึงข้อมูล VIP & เหรียญจาก Server KuaiKan ทันทีหลังบันทึก Session
+  try {
+    checkKuaikanWalletStatus();
+  } catch (wErr) {
+    console.warn('Auto check wallet error in saveKuaikanAuth:', wErr);
+  }
+
+  const updatedAuth = getKuaikanAuthStatus();
+
   return {
     status: 'success',
     success: true,
     message: 'บันทึก Session KuaiKan เรียบร้อยแล้ว',
-    session: {
-      updatedAt: sessionData.updatedAt,
-      isVip: sessionData.isVip,
-      cookiePreview: (cookieHeader || '').substring(0, 20) + '...'
-    },
+    session: updatedAuth,
     test: testRes
   };
 }
