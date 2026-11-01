@@ -4196,15 +4196,44 @@ function uploadChapterStitchedPart(payload) {
     const shouldAddToQueue = payload.isLastPart && payload.mangaId && !payload.skipQueue && !payload.isTest;
     if (shouldAddToQueue) {
       try {
-        queueRes = addQueue({
-          mangaid: payload.mangaId,
-          chapter: chapter.replace(/[^\d.]/g, '') || '0',
-          uploadstatus: 'Done',
-          worklink: folderUrl,
-          note: 'KuaiKan VIP Concat รวมเป็น ' + totalParts + ' หน้า ลง แปลจนเมื่อย'
-        });
+        const uploaderName = payload.uploadername || 'Apt';
+        const uploadStatus = payload.uploadstatus || 'เสร็จแล้ว';
+        const rawWorkLink = payload.worklink || ('[อัป Raw] ' + folderUrl);
+        const workLink = rawWorkLink.startsWith('[อัป Raw]') ? rawWorkLink : ('[อัป Raw] ' + rawWorkLink);
+        const cleanChapter = chapter.replace(/[^\d.]/g, '') || '0';
+
+        // ตรวจสอบว่ามีคิวงานของ mangaId และ chapter นี้อยู่แล้วหรือไม่
+        const existingQueue = getWorkQueue(true);
+        const existingItem = existingQueue.find(q => 
+          String(q.mangaid) === String(payload.mangaId) && 
+          String(q.chapter).trim() === cleanChapter
+        );
+
+        if (existingItem && existingItem.queueid) {
+          let currentLink = existingItem.worklink || '';
+          let links = currentLink.toString().split('\n').filter(l => l.trim());
+          links = links.filter(l => !l.startsWith('[อัป Raw]'));
+          links.push(workLink);
+          const finalWorkLink = links.join('\n');
+
+          queueRes = updateFullQueueItem(existingItem.queueid, {
+            uploadstatus: uploadStatus,
+            uploadername: uploaderName,
+            worklink: finalWorkLink,
+            note: payload.note || ('KuaiKan VIP Concat รวมเป็น ' + totalParts + ' หน้า ลง แปลจนเมื่อย')
+          });
+        } else {
+          queueRes = addQueue({
+            mangaid: payload.mangaId,
+            chapter: cleanChapter,
+            uploadstatus: uploadStatus,
+            uploadername: uploaderName,
+            worklink: workLink,
+            note: payload.note || ('KuaiKan VIP Concat รวมเป็น ' + totalParts + ' หน้า ลง แปลจนเมื่อย')
+          });
+        }
       } catch (qe) {
-        console.warn('Auto addQueue error:', qe);
+        console.warn('Auto add/update WorkQueue error in uploadChapterStitchedPart:', qe);
       }
     }
 
@@ -4330,13 +4359,46 @@ function downloadKuaikanChapterToDrive(payload) {
     // 3. Auto add to Queue (ข้ามหากเป็นการทดสอบ หรือกำหนด skipQueue: true)
     let queueRes = null;
     if (mangaId && !payload.skipQueue && !payload.isTest) {
-      queueRes = addQueue({
-        mangaid: mangaId,
-        chapter: chapter.replace(/[^\d.]/g, '') || '366',
-        uploadstatus: 'Done',
-        worklink: folderUrl,
-        note: 'Auto KuaiKan VIP DL (ตอน: ' + (testRes ? testRes.title : chapter) + ') ลง แปลจนเมื่อย'
-      });
+      try {
+        const uploaderName = (payload && payload.uploadername) || 'Apt';
+        const uploadStatus = (payload && payload.uploadstatus) || 'เสร็จแล้ว';
+        const rawWorkLink = (payload && payload.worklink) || ('[อัป Raw] ' + folderUrl);
+        const workLink = rawWorkLink.startsWith('[อัป Raw]') ? rawWorkLink : ('[อัป Raw] ' + rawWorkLink);
+        const cleanChapter = chapter.replace(/[^\d.]/g, '') || '366';
+
+        // ตรวจสอบว่ามีคิวงานของ mangaId และ chapter นี้อยู่แล้วหรือไม่
+        const existingQueue = getWorkQueue(true);
+        const existingItem = existingQueue.find(q => 
+          String(q.mangaid) === String(mangaId) && 
+          String(q.chapter).trim() === cleanChapter
+        );
+
+        if (existingItem && existingItem.queueid) {
+          let currentLink = existingItem.worklink || '';
+          let links = currentLink.toString().split('\n').filter(l => l.trim());
+          links = links.filter(l => !l.startsWith('[อัป Raw]'));
+          links.push(workLink);
+          const finalWorkLink = links.join('\n');
+
+          queueRes = updateFullQueueItem(existingItem.queueid, {
+            uploadstatus: uploadStatus,
+            uploadername: uploaderName,
+            worklink: finalWorkLink,
+            note: (payload && payload.note) || ('Auto KuaiKan VIP DL (ตอน: ' + (testRes ? testRes.title : chapter) + ') ลง แปลจนเมื่อย')
+          });
+        } else {
+          queueRes = addQueue({
+            mangaid: mangaId,
+            chapter: cleanChapter,
+            uploadstatus: uploadStatus,
+            uploadername: uploaderName,
+            worklink: workLink,
+            note: (payload && payload.note) || ('Auto KuaiKan VIP DL (ตอน: ' + (testRes ? testRes.title : chapter) + ') ลง แปลจนเมื่อย')
+          });
+        }
+      } catch (qe) {
+        console.warn('Auto add/update Queue error in downloadKuaikanChapterToDrive:', qe);
+      }
     }
 
     return {

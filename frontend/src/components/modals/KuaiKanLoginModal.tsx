@@ -604,8 +604,10 @@ export function KuaiKanLoginModal({
         mangaId: "4",
         chapter: "366",
         mangaName: "ข้าคือจอมวายร้ายผู้ยิ่งใหญ่",
-        skipQueue: true,
-        isTest: true,
+        skipQueue: false,
+        isTest: false,
+        uploadername: "Apt",
+        uploadstatus: "เสร็จแล้ว",
       })
       setDownloadResult(res)
       if (res && res.success) {
@@ -687,6 +689,7 @@ export function KuaiKanLoginModal({
       toast.info(`📏 ความกว้างมาตรฐาน (หน้าย่อยที่ ${sampleIdx + 1}): ${standardWidth}px (${stitchMode === "total20" ? `แบ่งรวมเป็น ${totalParts} ไฟล์` : `ไฟล์ละ 20 ชิ้น รวมเป็น ${totalParts} ไฟล์`})`)
 
       let lastFolderUrl = ""
+      let lastQueueAdded = false
 
       // 2. คำนวณแบ่งภาพตามโหมดที่เลือก
       for (let partIdx = 0; partIdx < totalParts; partIdx++) {
@@ -805,8 +808,11 @@ export function KuaiKanLoginModal({
               isLastPart: isLast,
               clearFolder: partNum === 1,
               mangaId: String(testResult.mangaId || "4"),
-              skipQueue: true,
-              isTest: true,
+              skipQueue: false,
+              isTest: false,
+              uploadername: "Apt",
+              uploadstatus: "เสร็จแล้ว",
+              worklink: lastFolderUrl ? `[อัป Raw] ${lastFolderUrl}` : undefined,
             })
 
             if (res && res.error) {
@@ -835,6 +841,26 @@ export function KuaiKanLoginModal({
 
         if (res && res.folderUrl) {
           lastFolderUrl = res.folderUrl
+        }
+        if (res && res.queueAdded) {
+          lastQueueAdded = true
+        }
+      }
+
+      // Fallback addQueue หาก backend ยังไม่ได้ลงคิว
+      if (lastFolderUrl && !lastQueueAdded) {
+        try {
+          const cleanChapter = (testResult.title || "第366话").replace(/[^\d.]/g, "") || "366"
+          await callGasApi("ADD_QUEUE", {
+            mangaid: String(testResult.mangaId || "4"),
+            chapter: cleanChapter,
+            uploadername: "Apt",
+            uploadstatus: "เสร็จแล้ว",
+            worklink: `[อัป Raw] ${lastFolderUrl}`,
+            note: `KuaiKan VIP Concat รวมเป็น ${totalParts} หน้า ลง แปลจนเมื่อย`,
+          })
+        } catch (addQErr) {
+          console.warn("Fallback ADD_QUEUE error:", addQErr)
         }
       }
 

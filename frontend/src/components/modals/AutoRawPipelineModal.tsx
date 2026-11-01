@@ -370,6 +370,9 @@ export function AutoRawPipelineModal({
             mangaId: String(task.mangaId),
             skipQueue: !autoAddQueue,
             isTest: false,
+            uploadername: "Apt",
+            uploadstatus: "เสร็จแล้ว",
+            worklink: lastFolderUrl ? `[อัป Raw] ${lastFolderUrl}` : undefined,
           })
           if (uploadRes && uploadRes.error) throw new Error(uploadRes.error)
           break

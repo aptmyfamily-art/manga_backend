@@ -277,7 +277,7 @@ def process_single_chapter(task):
         is_last = (part_idx == total_parts - 1)
         print(f"   [{part_num:02d}/{total_parts}] กำลังอัปโหลด {part_file_name} ({len(img_bytes)/1024:.1f} KB)...", end="", flush=True)
 
-        upload_res = call_gas("UPLOAD_CHAPTER_STITCHED_PART", {
+        upload_payload = {
             "mangaName": thai_name,
             "chapter": chapter_title,
             "partIndex": part_num,
@@ -289,8 +289,14 @@ def process_single_chapter(task):
             "clearFolder": (part_num == 1),
             "mangaId": manga_id,
             "skipQueue": False,  # ลงคิวงาน WorkQueue อัตโนมัติเมื่อครบหน้าสุดท้าย
-            "isTest": False
-        })
+            "isTest": False,
+            "uploadername": "Apt",
+            "uploadstatus": "เสร็จแล้ว"
+        }
+        if last_folder_url:
+            upload_payload["worklink"] = f"[อัป Raw] {last_folder_url}"
+
+        upload_res = call_gas("UPLOAD_CHAPTER_STITCHED_PART", upload_payload)
 
         if upload_res.get("status") == "success":
             up_data = upload_res.get("data", {})
