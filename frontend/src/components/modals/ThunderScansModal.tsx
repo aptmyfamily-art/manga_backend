@@ -45,24 +45,86 @@ const DEFAULT_CHAPTER_URL =
 const DRIVE_ROOT_FOLDER_ID = "1hA_5XjT1gLnzrAOFpT-COVfIbuSfVG6_"
 const STORAGE_COOKIE_KEY = "thunderscans_session_cookie"
 
+const proxyCache = new Map<string, string>()
+
 export async function loadThunderScansImageElement(
   url: string,
   onRetryNotice?: (text: string) => void
 ): Promise<HTMLImageElement | null> {
-  const maxAttempts = 5
+  if (!url) return null
+
+  // 1. Check if we already have a proxied dataUrl in cache
+  const cachedDataUrl = proxyCache.get(url)
+  if (cachedDataUrl) {
+    try {
+      return await new Promise<HTMLImageElement>((resolve, reject) => {
+        const image = new Image()
+        image.onload = () => resolve(image)
+        image.onerror = () => reject(new Error("Cached Data URL failed to load"))
+        image.src = cachedDataUrl
+      })
+    } catch {}
+  }
+
+  // 2. Try direct load with crossOrigin = "anonymous" first (fastest if CDN supports it)
+  try {
+    const directImg = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const image = new Image()
+      image.crossOrigin = "anonymous"
+      image.referrerPolicy = "no-referrer"
+
+      const timer = setTimeout(() => {
+        image.onload = null
+        image.onerror = null
+        reject(new Error("Timeout direct load"))
+      }, 3500)
+
+      image.onload = () => {
+        clearTimeout(timer)
+        if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+          resolve(image)
+        } else {
+          reject(new Error("Width is 0"))
+        }
+      }
+
+      image.onerror = () => {
+        clearTimeout(timer)
+        reject(new Error("CORS or network error"))
+      }
+
+      image.src = url
+    })
+
+    return directImg
+  } catch (err: any) {
+    console.info(`[loadThunderScansImageElement] Direct CORS load skipped (${err.message}), using GAS Proxy fallback for: ${url}`)
+  }
+
+  // 3. Fallback: Proxy via GAS API to bypass CORS without tainting Canvas
+  const maxAttempts = 3
   let attempt = 1
 
   while (attempt <= maxAttempts) {
     try {
-      const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-        const image = new Image()
-        image.crossOrigin = "anonymous"
-        image.referrerPolicy = "no-referrer"
+      if (onRetryNotice) {
+        onRetryNotice(`🔄 กำลังโหลดภาพผ่านระบบ GAS Proxy เพื่อแก้ไขปัญหา CORS (ครั้งที่ ${attempt}/${maxAttempts})...`)
+      }
 
+      const proxyRes = await callGasApi<any>("PROXY_THUNDERSCANS_IMAGE", { imageUrl: url })
+      if (!proxyRes || !proxyRes.dataUrl) {
+        throw new Error(proxyRes?.error || "Proxy API did not return dataUrl")
+      }
+
+      const dataUrl = proxyRes.dataUrl
+      proxyCache.set(url, dataUrl)
+
+      const proxiedImg = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const image = new Image()
         const timer = setTimeout(() => {
           image.onload = null
           image.onerror = null
-          reject(new Error(`Timeout 12s (ครั้งที่ ${attempt})`))
+          reject(new Error("Timeout proxied image load"))
         }, 12000)
 
         image.onload = () => {
@@ -70,33 +132,32 @@ export async function loadThunderScansImageElement(
           if (image.naturalWidth > 0 && image.naturalHeight > 0) {
             resolve(image)
           } else {
-            reject(new Error("ขนาดภาพเป็น 0"))
+            reject(new Error("Proxied image width is 0"))
           }
         }
 
         image.onerror = () => {
           clearTimeout(timer)
-          reject(new Error(`โหลดภาพไม่สำเร็จ (ครั้งที่ ${attempt})`))
+          reject(new Error("Proxied image onerror"))
         }
 
-        image.src = url
+        image.src = dataUrl
       })
 
-      return img
-    } catch (err: any) {
-      console.warn(`[loadThunderScansImageElement] Retry #${attempt}/${maxAttempts} for ${url}:`, err.message)
+      return proxiedImg
+    } catch (proxyErr: any) {
+      console.warn(`[loadThunderScansImageElement] Proxy Retry #${attempt}/${maxAttempts} for ${url}:`, proxyErr.message)
       if (onRetryNotice) {
-        onRetryNotice(`⚠️ กำลัง Retry ภาพครั้งที่ ${attempt}/${maxAttempts}...`)
+        onRetryNotice(`⚠️ Proxy กำลัง Retry ภาพ (${attempt}/${maxAttempts})...`)
       }
       attempt++
       if (attempt <= maxAttempts) {
-        const delayMs = Math.min(attempt * 500, 2500)
-        await new Promise((r) => setTimeout(r, delayMs))
+        await new Promise((r) => setTimeout(r, 1000 * attempt))
       }
     }
   }
 
-  console.warn(`[loadThunderScansImageElement] ข้ามภาพที่ไม่สามารถโหลดได้: ${url}`)
+  console.warn(`[loadThunderScansImageElement] ข้ามภาพที่ไม่สามารถโหลดได้แม้ผ่าน Proxy: ${url}`)
   return null
 }
 
@@ -374,7 +435,7 @@ export function ThunderScansModal({
       return
     }
 
-    const rawUrls: string[] = testResult.allImages || testResult.sampleImages || []
+    const rawUrls: string[] = testResult.allImages || testResult.images || testResult.sampleImages || []
     if (!rawUrls.length) {
       toast.error("ไม่พบรายการภาพสำหรับเย็บ กรุณากดทดสอบดึงตอนอีกครั้ง")
       return
@@ -395,6 +456,8 @@ export function ThunderScansModal({
       percent: 5,
       statusText: "กำลังวิเคราะห์ความกว้างมาตรฐานจากชิ้นส่วนที่ 15...",
     })
+
+    let uploadedCount = 0
 
     try {
       // 1. Dynamic slice #15 canvas width measurement
@@ -456,8 +519,7 @@ export function ThunderScansModal({
         )
         const loadedImages = loadedResults.filter((img): img is HTMLImageElement => img !== null)
         if (!loadedImages.length) {
-          console.warn(`Part ${partNum} ไม่มีภาพที่โหลดสำเร็จ ข้าม Part นี้`)
-          continue
+          throw new Error(`ไม่สามารถโหลดชิ้นภาพสำหรับหน้าที่ ${partNum} (${partRange}) ได้ กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ตหรือดึงภาพใหม่อีกครั้ง`)
         }
 
         // 2.2 Scale images to match standardWidth
@@ -587,6 +649,11 @@ export function ThunderScansModal({
         if (res && res.folderUrl) {
           lastFolderUrl = res.folderUrl
         }
+        uploadedCount++
+      }
+
+      if (uploadedCount === 0) {
+        throw new Error("ไม่มีไฟล์ภาพที่อัปโหลดสำเร็จขึ้น Google Drive กรุณาตรวจสอบสิทธิ์การเข้าถึงหรือลองใหม่อีกครั้ง")
       }
 
       setStitchProgress({
@@ -873,7 +940,6 @@ export function ThunderScansModal({
                               alt={`Slice ${idx + 1}`}
                               className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
                               referrerPolicy="no-referrer"
-                              crossOrigin="anonymous"
                               onError={(e) => {
                                 const target = e.currentTarget
                                 target.classList.add("opacity-60")

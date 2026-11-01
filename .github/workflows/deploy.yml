@@ -36,6 +36,11 @@ jobs:
 
       - name: Build with Vite
         run: npm run build
+        env:
+          VITE_GIT_COMMIT: ${{ github.sha }}
+
+      - name: Test Cache-Busting & Routing Integrity
+        run: npm test
 
       - name: Setup Pages
         uses: actions/configure-pages@v5

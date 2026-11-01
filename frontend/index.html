@@ -3,6 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     <title>MangaHub - Management System</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -19,7 +22,28 @@
               l.pathname.slice(0, -1) + decoded + l.hash
           );
         }
-      }(window.location))
+      }(window.location));
+
+      // Global error listener for stale dynamic chunk preload failures with reload loop protection
+      window.addEventListener('vite:preloadError', function () {
+        try {
+          var lastPreloadRetry = sessionStorage.getItem('mgh_preload_retry');
+          var now = Date.now();
+          if (lastPreloadRetry && (now - parseInt(lastPreloadRetry, 10) < 15000)) {
+            console.error('Dynamic chunk failed to load after reload retry. Aborting reload loop.');
+            return;
+          }
+          sessionStorage.setItem('mgh_preload_retry', now.toString());
+        } catch (e) {}
+        console.warn('Dynamic chunk preload error detected; forcing fresh reload...');
+        try {
+          var url = new URL(window.location.href);
+          url.searchParams.set('_v', Date.now().toString());
+          window.location.replace(url.toString());
+        } catch (e) {
+          window.location.reload();
+        }
+      });
     </script>
   </head>
   <body class="bg-[#0b0f19] text-slate-100 antialiased selection:bg-indigo-500 selection:text-white">

@@ -336,6 +336,9 @@ function doPost(e) {
         const thCookie = payload ? (payload.cookie || payload.directCookie || '') : '';
         result = testThunderscansChapter(thUrl, thCookie);
         break;
+      case 'PROXY_THUNDERSCANS_IMAGE':
+        result = proxyThunderScansImage(payload);
+        break;
 
       default:
         return createJsonResponse({ status: 'error', message: 'Unknown action: ' + action });
@@ -4171,6 +4174,37 @@ function testThunderscansChapter(chapterUrl, overrideCookie) {
       };
     }
 
+    // Pre-fetch sample images as base64 Data URLs for safe preview (bypassing CDN CORS and hotlink blocks)
+    const rawSampleUrls = images.slice(0, 6);
+    let sampleDataUrls = [];
+    if (rawSampleUrls.length > 0) {
+      try {
+        const sampleRequests = rawSampleUrls.map(function(u) {
+          return {
+            url: u,
+            method: 'get',
+            muteHttpExceptions: true,
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+              'Referer': 'https://en-thunderscans.com/'
+            }
+          };
+        });
+        const sampleResponses = UrlFetchApp.fetchAll(sampleRequests);
+        sampleDataUrls = sampleResponses.map(function(resp, idx) {
+          if (resp.getResponseCode() === 200) {
+            const blob = resp.getBlob();
+            let mime = blob.getContentType() || (rawSampleUrls[idx].indexOf('.webp') !== -1 ? 'image/webp' : 'image/jpeg');
+            return 'data:' + mime + ';base64,' + Utilities.base64Encode(blob.getBytes());
+          }
+          return rawSampleUrls[idx];
+        });
+      } catch (sampleErr) {
+        console.warn('Error pre-fetching sample dataUrls:', sampleErr);
+        sampleDataUrls = rawSampleUrls;
+      }
+    }
+
     return {
       status: 'success',
       isLocked: false,
@@ -4180,7 +4214,9 @@ function testThunderscansChapter(chapterUrl, overrideCookie) {
         imagesCount: images.length,
         images: images,
         allImages: images,
-        sampleImages: images.slice(0, 6),
+        sampleImages: sampleDataUrls.length > 0 ? sampleDataUrls : rawSampleUrls,
+        sampleDataUrls: sampleDataUrls,
+        rawSampleImages: rawSampleUrls,
         isLocked: false,
         post_id: postId,
         nextUrl: nextUrl,
@@ -4191,6 +4227,102 @@ function testThunderscansChapter(chapterUrl, overrideCookie) {
     };
   } catch (err) {
     console.error('testThunderscansChapter error:', err);
+    return { error: err.toString() };
+  }
+}
+
+function proxyThunderScansImage(payload) {
+  try {
+    let imageUrl = '';
+    let imageUrls = null;
+
+    if (typeof payload === 'string') {
+      imageUrl = payload.trim();
+    } else if (payload && typeof payload === 'object') {
+      if (Array.isArray(payload.imageUrls)) {
+        imageUrls = payload.imageUrls;
+      } else {
+        imageUrl = (payload.imageUrl || payload.url || '').trim();
+      }
+    }
+
+    // Batch mode with UrlFetchApp.fetchAll
+    if (imageUrls && Array.isArray(imageUrls) && imageUrls.length > 0) {
+      const requests = imageUrls.map(function(u) {
+        return {
+          url: u,
+          method: 'get',
+          muteHttpExceptions: true,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'Referer': 'https://en-thunderscans.com/'
+          }
+        };
+      });
+
+      const responses = UrlFetchApp.fetchAll(requests);
+      const items = responses.map(function(resp, idx) {
+        const u = imageUrls[idx];
+        if (resp.getResponseCode() === 200) {
+          const blob = resp.getBlob();
+          let mime = blob.getContentType() || (u.indexOf('.webp') !== -1 ? 'image/webp' : 'image/jpeg');
+          return {
+            imageUrl: u,
+            dataUrl: 'data:' + mime + ';base64,' + Utilities.base64Encode(blob.getBytes()),
+            success: true
+          };
+        }
+        return {
+          imageUrl: u,
+          error: 'HTTP ' + resp.getResponseCode(),
+          success: false
+        };
+      });
+
+      return {
+        success: true,
+        items: items
+      };
+    }
+
+    // Single mode
+    if (!imageUrl) {
+      return { error: 'No imageUrl provided' };
+    }
+
+    if (imageUrl.startsWith('data:')) {
+      return {
+        success: true,
+        dataUrl: imageUrl
+      };
+    }
+
+    const resp = UrlFetchApp.fetch(imageUrl, {
+      method: 'get',
+      muteHttpExceptions: true,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Referer': 'https://en-thunderscans.com/'
+      }
+    });
+
+    if (resp.getResponseCode() !== 200) {
+      return { error: 'Failed to fetch image: HTTP ' + resp.getResponseCode() };
+    }
+
+    const blob = resp.getBlob();
+    let contentType = blob.getContentType() || (imageUrl.indexOf('.webp') !== -1 ? 'image/webp' : 'image/jpeg');
+    const base64 = Utilities.base64Encode(blob.getBytes());
+    const dataUrl = 'data:' + contentType + ';base64,' + base64;
+
+    return {
+      success: true,
+      dataUrl: dataUrl,
+      contentType: contentType,
+      size: blob.getBytes().length
+    };
+  } catch (err) {
+    console.error('proxyThunderScansImage error:', err);
     return { error: err.toString() };
   }
 }

@@ -49,7 +49,15 @@ import {
   Radio,
   QrCode,
   Plug,
+  Sparkles,
 } from "lucide-react"
+import {
+  useVersionWatcher,
+  fetchRemoteVersion,
+  isNewerVersion,
+  forceCacheBustingReload,
+  formatBuildDate,
+} from "@/lib/versionManager"
 
 type ViewKey =
   | "dashboard"
@@ -88,12 +96,23 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = React.useState(false)
   const [queueSearchTerm, setQueueSearchTerm] = React.useState("")
 
+  const {
+    updateAvailable,
+    applyUpdate,
+    checkVersion,
+    currentVersion,
+    currentBuildTime,
+    currentCommit,
+  } = useVersionWatcher()
+
   const changeView = (view: ViewKey) => {
     setActiveView(view)
     const targetPath = `/${view}`
     if (window.location.pathname !== targetPath) {
       window.history.pushState(null, "", targetPath)
     }
+    // Check for updates when navigating views (e.g. going to connectors)
+    checkVersion()
   }
 
   React.useEffect(() => {
@@ -104,10 +123,12 @@ export default function App() {
     return () => window.removeEventListener("popstate", onPopState)
   }, [])
 
-  // Sync initial clean URL on mount if at root
+  // Sync initial clean URL on mount if at root, preserving query parameters and hash
   React.useEffect(() => {
     if (window.location.pathname === "/" || window.location.pathname === "") {
-      window.history.replaceState(null, "", `/${activeView}`)
+      const search = window.location.search || ""
+      const hash = window.location.hash || ""
+      window.history.replaceState(null, "", `/${activeView}${search}${hash}`)
     }
   }, [activeView])
 
@@ -243,6 +264,22 @@ export default function App() {
   }
 
   const handleManualRefresh = async () => {
+    // 1. Check for pending frontend deployment first
+    try {
+      const remote = await fetchRemoteVersion()
+      if (remote && isNewerVersion(remote)) {
+        toast.loading("พบระบบเวอร์ชันใหม่! กำลังโหลดเวอร์ชันล่าสุด...", {
+          id: "manual-refresh",
+        })
+        setTimeout(() => {
+          forceCacheBustingReload(remote.version, true)
+        }, 300)
+        return
+      }
+    } catch {
+      // Continue to GAS data refresh if version check fails
+    }
+
     toast.loading("กำลังดึงข้อมูลล่าสุดจาก Google Sheets...", {
       id: "manual-refresh",
     })
@@ -394,7 +431,7 @@ export default function App() {
                 MangaHub
               </span>
               <span className="block text-[10px] text-indigo-400 font-medium">
-                Cloud Management v2.0
+                Cloud Management v{currentVersion}
               </span>
             </div>
           </div>
@@ -427,7 +464,13 @@ export default function App() {
           })}
         </nav>
 
-        <div className="p-4 border-t border-[#26334d]">
+        <div className="p-4 border-t border-[#26334d] space-y-2">
+          <div className="flex items-center justify-between text-[11px] text-slate-400 px-1">
+            <span>Build: {formatBuildDate(currentBuildTime)}</span>
+            <span className="font-mono text-[10px] text-slate-400">
+              #{currentCommit}
+            </span>
+          </div>
           <Button
             variant="ghost"
             className="w-full justify-start text-slate-400 hover:text-red-400"
@@ -472,6 +515,27 @@ export default function App() {
               </div>
             </div>
 
+            {updateAvailable && (
+              <Button
+                variant="default"
+                size="sm"
+                onClick={applyUpdate}
+                className="bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold text-xs gap-1.5 shadow-md shadow-amber-500/20 animate-pulse cursor-pointer border-0"
+                title="คลิกเพื่ออัปเดตเวอร์ชันล่าสุดทันที (แก้ปัญหาแคชค้าง)"
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                <span>
+                  อัปเดต (
+                  {updateAvailable.packageVersion !== currentVersion
+                    ? `v${updateAvailable.packageVersion}`
+                    : updateAvailable.commit !== "dev"
+                    ? `#${updateAvailable.commit.slice(0, 7)}`
+                    : "ใหม่"}
+                  )
+                </span>
+              </Button>
+            )}
+
             <Button
               variant="outline"
               size="sm"
@@ -488,7 +552,7 @@ export default function App() {
               size="icon"
               onClick={handleManualRefresh}
               disabled={isBusyFetching}
-              title="รีเฟรชข้อมูลสดทันที"
+              title="รีเฟรชข้อมูลสดทันที (และตรวจหาอัปเดตระบบ)"
             >
               <RefreshCw
                 className={`h-4 w-4 ${isBusyFetching ? "animate-spin" : ""}`}
