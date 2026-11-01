@@ -43,14 +43,18 @@ import {
   normalizeKuaikanImageUrl,
   loadImageElement,
 } from "@/components/modals/KuaiKanLoginModal"
+import { ThunderScansModal } from "@/components/modals/ThunderScansModal"
 
 interface ConnectorsViewProps {
   mangaList: any[]
 }
 
 export function ConnectorsView({ mangaList }: ConnectorsViewProps) {
-  // Active category filter: "all" | "cn" | "kr" | "jp"
-  const [filterCategory, setFilterCategory] = React.useState<"all" | "cn" | "kr" | "jp">("all")
+  // Active category filter: "all" | "en" | "cn" | "kr" | "jp"
+  const [filterCategory, setFilterCategory] = React.useState<"all" | "en" | "cn" | "kr" | "jp">("all")
+
+  // ThunderScans Modal State
+  const [thunderModalOpen, setThunderModalOpen] = React.useState(false)
 
   // KuaiKan Session State
   const [loadingSession, setLoadingSession] = React.useState(false)
@@ -603,6 +607,17 @@ export function ConnectorsView({ mangaList }: ConnectorsViewProps) {
   // List of Connectors
   const connectorsList = [
     {
+      id: "thunderscans",
+      name: "⚡ ThunderScans EN (en-thunderscans.com)",
+      region: "en",
+      active: true,
+      status: "ready",
+      statusLabel: "⚡ พร้อมใช้งาน",
+      desc: "ดึงมังงะต้นฉบับอังกฤษ รองรับทั้งตอนฟรีและตอนซื้อด้วยบัญชี Google พร้อมระบบ Dynamic Slice #15 เย็บเป็น 20 หน้าลง แปลจนเมื่อย",
+      icon: Zap,
+      color: "from-amber-500/20 to-yellow-500/20 border-amber-500/40 text-amber-400",
+    },
+    {
       id: "kuaikan",
       name: "KuaiKan Manhua (快看漫画)",
       region: "cn",
@@ -723,6 +738,16 @@ export function ConnectorsView({ mangaList }: ConnectorsViewProps) {
           }`}
         >
           ทั้งหมด ({connectorsList.length})
+        </button>
+        <button
+          onClick={() => setFilterCategory("en")}
+          className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+            filterCategory === "en"
+              ? "bg-amber-500 text-slate-950 font-bold shadow-xs"
+              : "bg-[#151d2f] text-slate-400 hover:text-slate-200 border border-[#26334d]"
+          }`}
+        >
+          ⚡ สแกนอังกฤษ (ThunderScans)
         </button>
         <button
           onClick={() => setFilterCategory("cn")}
@@ -1195,6 +1220,74 @@ export function ConnectorsView({ mangaList }: ConnectorsViewProps) {
             </CardContent>
           )}
         </Card>
+
+        {/* Dedicated Active Connector Card: ⚡ ThunderScans EN */}
+        <Card className="border-amber-500/40 bg-[#0d1322] shadow-xl overflow-hidden mt-6">
+          <div className="border-b border-amber-500/20 bg-gradient-to-r from-amber-950/40 via-[#151d2f] to-[#0d1322] p-5 sm:p-6">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="flex items-start gap-4">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-amber-500/20 border border-amber-500/40 text-amber-400 shadow-md">
+                  <Zap className="h-6 w-6" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    <h3 className="text-lg font-bold text-white">⚡ ThunderScans EN (en-thunderscans.com)</h3>
+                    <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-300 text-xs font-semibold">
+                      English Webtoon / Manga
+                    </Badge>
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/20 px-2.5 py-0.5 text-xs font-semibold text-emerald-400 border border-emerald-500/30">
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      พร้อมใช้งาน (ตอนฟรี & บัญชี Google)
+                    </span>
+                    <Badge variant="outline" className="border-slate-700 bg-slate-800/60 text-slate-300 text-[11px]">
+                      Root: แปลจนเมื่อย
+                    </Badge>
+                  </div>
+                  <p className="text-xs text-slate-400 mt-1">
+                    ระบบดึงมังงะภาษาอังกฤษ • รองรับตอนฟรีและตอนซื้อด้วยบัญชี Google • Dynamic Slice #15 Canvas Measurement • เย็บ 20 หน้าลง Google Drive
+                  </p>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center gap-2 shrink-0">
+                <Button
+                  onClick={() => setThunderModalOpen(true)}
+                  className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow-md cursor-pointer"
+                >
+                  <Zap className="h-3.5 w-3.5 mr-1.5" />
+                  เปิดเครื่องมือดึงภาพ (Open ThunderScans)
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          <CardContent className="p-4 sm:p-5 bg-[#0b0f19]/60">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-2 text-slate-300 flex-wrap">
+                <BookOpen className="h-4 w-4 text-amber-400 shrink-0" />
+                <span>
+                  ตอนทดสอบหลัก: <strong className="text-white">The Clan's Failure Is a Former Continental Champion (Ch. 62)</strong>
+                </span>
+                <span className="text-slate-500 hidden md:inline">|</span>
+                <span className="text-slate-400 hidden md:inline">
+                  ปลายทาง Drive: <span className="text-emerald-400 font-mono">แปลจนเมื่อย / The Clan's Failure Is a Former Continental Champion / Chapter 62</span>
+                </span>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setThunderModalOpen(true)}
+                  className="h-8 border-[#26334d] bg-[#151d2f] text-slate-200 hover:text-white text-xs cursor-pointer"
+                >
+                  <Scissors className="h-3.5 w-3.5 mr-1.5 text-amber-400" />
+                  ทดสอบดึงภาพ & เย็บ 20 หน้า
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       {/* Upcoming Connectors Grid */}
@@ -1214,26 +1307,27 @@ export function ConnectorsView({ mangaList }: ConnectorsViewProps) {
             .filter((c) => c.id !== "kuaikan")
             .map((conn) => {
               const Icon = conn.icon
+              const isThunder = conn.id === "thunderscans"
               return (
                 <Card
                   key={conn.id}
-                  className="border-[#26334d] bg-[#0d1322] hover:border-[#384869] transition-all duration-200 relative overflow-hidden group"
+                  className={`border-[#26334d] bg-[#0d1322] hover:border-[#384869] transition-all duration-200 relative overflow-hidden group ${isThunder ? "border-amber-500/40 hover:border-amber-500/70" : ""}`}
                 >
                   <CardHeader className="p-5">
                     <div className="flex items-start justify-between gap-3">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-800/80 border border-slate-700/60 text-slate-400 group-hover:text-white transition-colors">
+                      <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${isThunder ? "bg-amber-500/20 border border-amber-500/40 text-amber-400" : "bg-slate-800/80 border border-slate-700/60 text-slate-400 group-hover:text-white"} transition-colors`}>
                         <Icon className="h-5 w-5" />
                       </div>
                       <Badge
                         variant="outline"
-                        className="border-slate-700 bg-slate-800/50 text-slate-400 text-[10px] font-medium"
+                        className={`${isThunder ? "border-amber-500/40 bg-amber-500/10 text-amber-300" : "border-slate-700 bg-slate-800/50 text-slate-400"} text-[10px] font-medium`}
                       >
                         {conn.statusLabel}
                       </Badge>
                     </div>
 
                     <div className="mt-3">
-                      <CardTitle className="text-sm font-bold text-white group-hover:text-indigo-300 transition-colors">
+                      <CardTitle className={`text-sm font-bold ${isThunder ? "text-amber-200" : "text-white"} group-hover:text-amber-300 transition-colors`}>
                         {conn.name}
                       </CardTitle>
                       <CardDescription className="text-xs text-slate-400 mt-1 line-clamp-2">
@@ -1245,16 +1339,28 @@ export function ConnectorsView({ mangaList }: ConnectorsViewProps) {
                   <CardContent className="p-5 pt-0">
                     <div className="pt-3 border-t border-[#26334d]/60 flex items-center justify-between">
                       <span className="text-[11px] text-slate-500 font-mono">
-                        {conn.region === "cn" ? "🇨🇳 China" : "🇰🇷 Korea"}
+                        {conn.region === "en" ? "🇬🇧 English / Scan" : conn.region === "cn" ? "🇨🇳 China" : "🇰🇷 Korea"}
                       </span>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        disabled
-                        className="h-7 text-xs text-slate-500 cursor-not-allowed"
-                      >
-                        ตั้งค่า (เร็วๆ นี้)
-                      </Button>
+                      {isThunder ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setThunderModalOpen(true)}
+                          className="h-7 text-xs bg-amber-500/10 border-amber-500/40 text-amber-300 hover:bg-amber-500 hover:text-slate-950 font-semibold cursor-pointer"
+                        >
+                          <Zap className="h-3 w-3 mr-1" />
+                          เปิดใช้งาน
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled
+                          className="h-7 text-xs text-slate-500 cursor-not-allowed"
+                        >
+                          ตั้งค่า (เร็วๆ นี้)
+                        </Button>
+                      )}
                     </div>
                   </CardContent>
                 </Card>
@@ -1262,6 +1368,12 @@ export function ConnectorsView({ mangaList }: ConnectorsViewProps) {
             })}
         </div>
       </div>
+
+      {/* ThunderScans Modal */}
+      <ThunderScansModal
+        open={thunderModalOpen}
+        onClose={() => setThunderModalOpen(false)}
+      />
     </div>
   )
 }

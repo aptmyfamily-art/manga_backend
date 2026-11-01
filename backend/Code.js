@@ -318,12 +318,35 @@ function doPost(e) {
         result = uploadChapterStitchedPart(payload);
         break;
 
+      // --- THUNDERSCANS EN CONNECTOR ---
+      case 'GET_THUNDERSCANS_SESSION':
+      case 'GET_THUNDERSCANS_AUTH':
+        result = getThunderscansSession();
+        break;
+      case 'SAVE_THUNDERSCANS_SESSION':
+      case 'SAVE_THUNDERSCANS_AUTH':
+        result = saveThunderscansSession(payload);
+        break;
+      case 'CLEAR_THUNDERSCANS_SESSION':
+      case 'CLEAR_THUNDERSCANS_AUTH':
+        result = clearThunderscansSession();
+        break;
+      case 'TEST_THUNDERSCANS_CHAPTER':
+        const thUrl = payload ? (payload.chapterUrl || payload.url || payload.chapter_url || '') : '';
+        const thCookie = payload ? (payload.cookie || payload.directCookie || '') : '';
+        result = testThunderscansChapter(thUrl, thCookie);
+        break;
+
       default:
         return createJsonResponse({ status: 'error', message: 'Unknown action: ' + action });
     }
 
     if (result && result.error) {
       return createJsonResponse({ status: 'error', message: result.error });
+    }
+
+    if (result && result.status && result.data !== undefined) {
+      return createJsonResponse(result);
     }
 
     return createJsonResponse({ status: 'success', data: result });
@@ -3266,14 +3289,15 @@ function normalizeKuaikanImageUrl(url) {
 function extractComicImagesFromHtml(html, comicId) {
   const urls = [];
   if (!html || typeof html !== 'string') return urls;
-  const targetId = String(comicId || '855368');
+  if (!comicId) return urls;
+  const targetId = String(comicId).trim();
 
   // 1. ถอดรหัส Unicode escape เช่น \u002F -> / และ \/ -> /
   const decodedHtml = html.replace(/\\u002F/gi, '/').replace(/\\\//g, '/');
 
   const seenKeys = {};
 
-  // 2. Regex ค้นหาภาพตอนที่มี /image/c<targetId>/ หรือ /image/c\d+/
+  // 2. Regex ค้นหาภาพตอนที่มี /image/c<targetId>/ หรือ /c<targetId>/
   // หมายเหตุ: อย่าตัด & ออก เพื่อให้เก็บ query string (?sign=...&t=...) ไว้สำหรับเป็น fallback CDN
   const targetRegex = new RegExp('https?:\\/\\/[^"\'\\s<>]*(?:kkmh\\.com)\\/image\\/c' + targetId + '\\/[^"\'\\s<>]+', 'gi');
   let match;
@@ -3288,22 +3312,6 @@ function extractComicImagesFromHtml(html, comicId) {
     if (!seenKeys[key]) {
       seenKeys[key] = true;
       urls.push(rawUrl);
-    }
-  }
-
-  // 3. Fallback ค้นหาภาพ /image/c\d+/ ทั่วไป
-  if (!urls.length) {
-    const genericRegex = /https?:\/\/[^"'\s<>]*(?:kkmh\.com)\/image\/c\d+\/[^"'\s<>]+/gi;
-    let m2;
-    while ((m2 = genericRegex.exec(decodedHtml)) !== null) {
-      const rawUrl = m2[0].replace(/&amp;/g, '&');
-      if (rawUrl.indexOf('w640') !== -1) continue;
-      const keyMatch = rawUrl.match(/\/image\/c\d+\/\d+\/([^.]+)/i);
-      const key = keyMatch ? keyMatch[1] : rawUrl;
-      if (!seenKeys[key]) {
-        seenKeys[key] = true;
-        urls.push(rawUrl);
-      }
     }
   }
 
@@ -3879,6 +3887,274 @@ function downloadKuaikanChapterToDrive(payload) {
     };
   } catch (err) {
     console.error('downloadKuaikanChapterToDrive error:', err);
+    return { error: err.toString() };
+  }
+}
+
+// ==============================================================================
+// THUNDERSCANS EN (en-thunderscans.com) CONNECTOR & SCRAPER
+// ==============================================================================
+
+const THUNDERSCANS_PROP_KEY = 'THUNDERSCANS_SESSION';
+
+function getThunderscansSession() {
+  try {
+    const raw = PropertiesService.getScriptProperties().getProperty(THUNDERSCANS_PROP_KEY);
+    if (!raw) {
+      return {
+        loggedIn: false,
+        cookie: '',
+        message: 'ยังไม่มี Cookie Session ของ ThunderScans'
+      };
+    }
+    const session = JSON.parse(raw);
+    const cookie = session.cookie || '';
+    if (!cookie) {
+      return {
+        loggedIn: false,
+        cookie: '',
+        message: 'ยังไม่มี Cookie Session ของ ThunderScans'
+      };
+    }
+    return {
+      loggedIn: true,
+      cookie: cookie,
+      updatedAt: session.updatedAt || '',
+      isGoogleLoggedIn: Boolean(session.isGoogleLoggedIn || cookie.indexOf('wordpress_logged_in') !== -1),
+      cookiePreview: cookie.length > 30 ? cookie.substring(0, 30) + '...' : cookie,
+      lastChapterUrl: session.lastChapterUrl || '',
+      message: 'Cookie บัญชี en-thunderscans.com พร้อมใช้งาน'
+    };
+  } catch (e) {
+    console.error('getThunderscansSession error:', e);
+    return { loggedIn: false, error: e.toString() };
+  }
+}
+
+function saveThunderscansSession(cookie) {
+  try {
+    let cookieStr = '';
+    let chapterUrl = '';
+    let images = [];
+    let title = '';
+
+    if (typeof cookie === 'string') {
+      cookieStr = cookie;
+    } else if (cookie && typeof cookie === 'object') {
+      cookieStr = cookie.cookie || cookie.directCookie || '';
+      chapterUrl = cookie.chapterUrl || '';
+      images = cookie.images || [];
+      title = cookie.title || '';
+    }
+
+    cookieStr = (cookieStr || '').trim();
+    if (!cookieStr && (!images || images.length === 0)) {
+      return { error: 'ไม่มี Cookie หรือข้อมูลสำหรับบันทึก' };
+    }
+
+    const sessionData = {
+      cookie: cookieStr,
+      isGoogleLoggedIn: Boolean(cookieStr.indexOf('wordpress_logged_in') !== -1),
+      updatedAt: new Date().toISOString(),
+      lastChapterUrl: chapterUrl
+    };
+
+    if (images && images.length > 0) {
+      sessionData.cachedImages = images;
+      sessionData.cachedTitle = title;
+    }
+
+    PropertiesService.getScriptProperties().setProperty(THUNDERSCANS_PROP_KEY, JSON.stringify(sessionData));
+
+    return {
+      success: true,
+      message: 'บันทึก Cookie Session ของ ThunderScans เรียบร้อยแล้ว',
+      cookiePreview: cookieStr.length > 30 ? cookieStr.substring(0, 30) + '...' : cookieStr,
+      updatedAt: sessionData.updatedAt,
+      isGoogleLoggedIn: sessionData.isGoogleLoggedIn,
+      imagesCount: images ? images.length : 0
+    };
+  } catch (err) {
+    console.error('saveThunderscansSession error:', err);
+    return { error: err.toString() };
+  }
+}
+
+function clearThunderscansSession() {
+  PropertiesService.getScriptProperties().deleteProperty(THUNDERSCANS_PROP_KEY);
+  return { success: true, message: 'ลบ Cookie Session ของ ThunderScans เรียบร้อยแล้ว' };
+}
+
+// Aliases for compatibility
+function getThunderScansSessionData() {
+  try {
+    const raw = PropertiesService.getScriptProperties().getProperty(THUNDERSCANS_PROP_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    console.error('getThunderScansSessionData error:', e);
+    return null;
+  }
+}
+
+function getThunderScansAuthStatus() {
+  return getThunderscansSession();
+}
+
+function saveThunderScansAuth(payload) {
+  return saveThunderscansSession(payload);
+}
+
+function clearThunderScansAuth() {
+  return clearThunderscansSession();
+}
+
+function testThunderScansChapter(chapterUrl, overrideCookie) {
+  return testThunderscansChapter(chapterUrl, overrideCookie);
+}
+
+function testThunderscansChapter(chapterUrl, overrideCookie) {
+  try {
+    const targetUrl = (chapterUrl || '').trim() ||
+      'https://en-thunderscans.com/the-clans-failure-is-a-former-continental-champion-chapter-62/';
+
+    let cookie = overrideCookie;
+    if (!cookie) {
+      const session = getThunderscansSession();
+      if (session && session.cookie) {
+        cookie = session.cookie;
+      }
+    }
+
+    const headers = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      'Referer': 'https://en-thunderscans.com/'
+    };
+    if (cookie) {
+      headers['Cookie'] = cookie;
+    }
+
+    let html = '';
+    try {
+      const resp = UrlFetchApp.fetch(targetUrl, {
+        method: 'get',
+        muteHttpExceptions: true,
+        headers: headers
+      });
+      html = resp.getContentText();
+    } catch (fetchErr) {
+      console.warn('testThunderscansChapter UrlFetchApp error:', fetchErr);
+      return {
+        status: 'error',
+        error: 'Fetch failed: ' + fetchErr.toString()
+      };
+    }
+
+    // Extract title from <title> or h1.entry-title or h1
+    let title = '';
+    const h1Match = html.match(/<h1[^>]*class=["'][^"']*(?:entry-title|lock-title)[^"']*["'][^>]*>([\s\S]*?)<\/h1>/i) ||
+                    html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
+    if (h1Match) {
+      title = h1Match[1].replace(/<[^>]+>/g, '').trim();
+    }
+    if (!title) {
+      const titleMatch = html.match(/<title>([\s\S]*?)<\/title>/i);
+      if (titleMatch) {
+        title = titleMatch[1].trim();
+        title = title.replace(/\s*[-–]\s*Thunderscans.*$/i, '').trim();
+      }
+    }
+    if (title) {
+      title = title.replace(/&#8211;/g, '-').replace(/&#8217;/g, "'").replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
+    }
+
+    // Extract post_id
+    let postId = null;
+    const postIdMatch = html.match(/class=["'][^"']*post-(\d+)[^"']*["']/i) ||
+                        html.match(/data-id=["'](\d+)["']/i) ||
+                        html.match(/["']?post_id["']?\s*:\s*(\d+)/i);
+    if (postIdMatch) {
+      postId = parseInt(postIdMatch[1], 10);
+    }
+
+    // Check lock indicators (e.g. "This chapter is locked" or countdown timer or buy button)
+    const hasLockIndicator = /chapter\s+is\s+locked|lock-status|buy\s+chapter|countdown|coin-amount/i.test(html);
+
+    // Extract ts_reader.run({...}) JSON payload
+    let tsReader = null;
+    const tsMatch = html.match(/ts_reader\.run\s*\(\s*(\{[\s\S]*?\})\s*\)\s*;/);
+    if (tsMatch) {
+      try {
+        tsReader = JSON.parse(tsMatch[1]);
+      } catch (e) {
+        console.warn('Failed to parse ts_reader JSON:', e);
+      }
+    }
+
+    if (tsReader && tsReader.post_id) {
+      postId = tsReader.post_id;
+    }
+
+    const prevUrl = tsReader ? (tsReader.prevUrl || null) : null;
+    const nextUrl = tsReader ? (tsReader.nextUrl || null) : null;
+
+    let images = [];
+    if (tsReader && Array.isArray(tsReader.sources) && tsReader.sources.length > 0) {
+      images = (tsReader.sources[0] && Array.isArray(tsReader.sources[0].images)) ? tsReader.sources[0].images : [];
+    }
+
+    // Fallback: Check if images were cached in session
+    if (images.length === 0) {
+      const sessionData = getThunderScansSessionData();
+      if (sessionData && sessionData.cachedImages && sessionData.cachedImages.length > 0) {
+        images = sessionData.cachedImages;
+        if (sessionData.cachedTitle) title = sessionData.cachedTitle;
+      }
+    }
+
+    const isLocked = Boolean(hasLockIndicator || !tsReader || images.length === 0);
+
+    if (isLocked) {
+      return {
+        status: 'success',
+        isLocked: true,
+        message: 'Chapter is coin-locked. Cookie with purchased chapter or valid login required.',
+        data: {
+          title: title,
+          totalImages: 0,
+          images: [],
+          allImages: [],
+          imagesCount: 0,
+          isLocked: true,
+          message: 'Chapter is coin-locked. Cookie with purchased chapter or valid login required.',
+          post_id: postId,
+          nextUrl: nextUrl,
+          prevUrl: prevUrl,
+          chapterUrl: targetUrl,
+          success: true
+        }
+      };
+    }
+
+    return {
+      status: 'success',
+      isLocked: false,
+      data: {
+        title: title,
+        totalImages: images.length,
+        imagesCount: images.length,
+        images: images,
+        allImages: images,
+        sampleImages: images.slice(0, 6),
+        isLocked: false,
+        post_id: postId,
+        nextUrl: nextUrl,
+        prevUrl: prevUrl,
+        chapterUrl: targetUrl,
+        success: true
+      }
+    };
+  } catch (err) {
+    console.error('testThunderscansChapter error:', err);
     return { error: err.toString() };
   }
 }
