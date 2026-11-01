@@ -2683,13 +2683,15 @@ function importTrackersFromMangaList() {
   const urlCol = headers.indexOf('url');
   
   const existingMangaIds = new Set();
+  const existingUrls = new Set();
   let deletedCount = 0;
 
-  // 1. ตรวจสอบแถวเดิมใน RawTracker: ถ้าเรื่องถูกลบออกจาก Mangas แล้ว ให้ลบแถวออกจาก RawTracker
+  // 1. ตรวจสอบแถวเดิมใน RawTracker: ถ้าเรื่องถูกลบออกจาก Mangas แล้ว หรือมีแถวซ้ำ ให้ลบแถวออกจาก RawTracker
   if (data.length > 1) {
     for (let i = data.length - 1; i >= 1; i--) {
       const rowMangaId = mIdCol !== -1 ? String(data[i][mIdCol] || '').trim() : '';
       const rowMangaName = nameCol !== -1 ? String(data[i][nameCol] || '').trim().toLowerCase() : '';
+      const rowUrl = urlCol !== -1 ? String(data[i][urlCol] || '').trim().toLowerCase().replace(/\/+$/, '') : '';
       
       let isOrphaned = false;
       if (rowMangaId) {
@@ -2702,7 +2704,10 @@ function importTrackersFromMangaList() {
         }
       }
 
-      if (isOrphaned) {
+      const isDuplicate = (rowMangaId && existingMangaIds.has(rowMangaId)) ||
+                          (rowUrl && existingUrls.has(rowUrl));
+
+      if (isOrphaned || isDuplicate) {
         sheet.deleteRow(i + 1);
         deletedCount++;
       } else {
@@ -2718,6 +2723,9 @@ function importTrackersFromMangaList() {
               sheet.getRange(i + 1, urlCol + 1).setValue(m.originalurl.trim());
             }
           }
+        }
+        if (rowUrl) {
+          existingUrls.add(rowUrl);
         }
       }
     }

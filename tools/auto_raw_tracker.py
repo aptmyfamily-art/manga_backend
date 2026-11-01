@@ -155,6 +155,14 @@ def process_single_chapter(task):
     sample_bytes = download_image(urls[sample_idx])
     if not sample_bytes:
         sample_bytes = download_image(urls[0])
+    if not sample_bytes:
+        for u in urls:
+            sample_bytes = download_image(u)
+            if sample_bytes:
+                break
+    if not sample_bytes:
+        print("❌ ไม่สามารถดาวน์โหลดชิ้นส่วนใดๆ เพื่อวัดขนาดความกว้างมาตรฐานได้ ข้าม")
+        return False
     sample_img = Image.open(io.BytesIO(sample_bytes))
     standard_width = sample_img.width
     print(f"✓ ความกว้างมาตรฐานคือ {standard_width}px (จากหน้าย่อย #{sample_idx + 1})")

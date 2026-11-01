@@ -485,10 +485,83 @@ export function RawTrackerView({
   const activeTrackers = React.useMemo(() => {
     if (!mangaList || mangaList.length === 0) return trackers
     return trackers.filter((t) => {
-      if (!t.mangaid) return true
-      return mangaMap.has(String(t.mangaid))
+      const mId = t.mangaid != null ? String(t.mangaid).trim() : ""
+      if (mId) {
+        return mangaMap.has(mId)
+      }
+      if (t.manganame) {
+        const nameLower = t.manganame.trim().toLowerCase()
+        return mangaList.some(
+          (m) => m.manganame && m.manganame.trim().toLowerCase() === nameLower
+        )
+      }
+      return true
     })
   }, [trackers, mangaList, mangaMap])
+
+  // ตรวจสอบรายการติดตามที่ซ้ำกันในระบบ (Duplicate Trackers)
+  const duplicateTrackers = React.useMemo(() => {
+    const seenMangaIds = new Set<string>()
+    const seenUrls = new Set<string>()
+    const duplicates: RawTrackerItem[] = []
+
+    activeTrackers.forEach((t) => {
+      let isDup = false
+      const mId = t.mangaid != null ? String(t.mangaid).trim() : ""
+      const normUrl = (t.url || "").trim().toLowerCase().replace(/\/+$/, "")
+
+      if (mId && seenMangaIds.has(mId)) {
+        isDup = true
+      } else if (normUrl && seenUrls.has(normUrl)) {
+        isDup = true
+      }
+
+      if (isDup) {
+        duplicates.push(t)
+      } else {
+        if (mId) seenMangaIds.add(mId)
+        if (normUrl) seenUrls.add(normUrl)
+      }
+    })
+
+    return duplicates
+  }, [activeTrackers])
+
+  const duplicateIdSet = React.useMemo(() => {
+    return new Set(duplicateTrackers.map((t) => t.trackerid))
+  }, [duplicateTrackers])
+
+  const [cleaningDuplicates, setCleaningDuplicates] = React.useState(false)
+
+  // ลบรายการติดตามที่ซ้ำกัน
+  const handleCleanDuplicates = async () => {
+    if (!duplicateTrackers.length) return
+    if (
+      !confirm(
+        `คุณต้องการลบรายการติดตามที่ซ้ำกัน ${duplicateTrackers.length} รายการ ใช่หรือไม่?`
+      )
+    )
+      return
+
+    setCleaningDuplicates(true)
+    toast.loading("กำลังลบรายการติดตามที่ซ้ำกัน...", { id: "clean-dup" })
+    try {
+      for (const item of duplicateTrackers) {
+        await callGasApi("DELETE_RAW_TRACKER", { id: item.trackerid })
+      }
+      toast.success(
+        `ลบรายการติดตามที่ซ้ำกัน ${duplicateTrackers.length} รายการ เรียบร้อยแล้ว`,
+        { id: "clean-dup" }
+      )
+      refetch()
+    } catch (err: any) {
+      toast.error(err.message || "เกิดข้อผิดพลาดในการลบรายการซ้ำ", {
+        id: "clean-dup",
+      })
+    } finally {
+      setCleaningDuplicates(false)
+    }
+  }
 
   // Statistics
   const urgentWithNewCount = React.useMemo(() => {
@@ -499,6 +572,14 @@ export function RawTrackerView({
     return activeTrackers.filter((t) => getTrackerUrgency(t).hasNew)
   }, [activeTrackers, getTrackerUrgency])
   const newUpdatesCount = newUpdatesItems.length
+
+  // Total pending chapters across all active trackers
+  const totalPendingChapters = React.useMemo(() => {
+    return activeTrackers.reduce((sum, t) => {
+      const u = getTrackerUrgency(t)
+      return sum + (u.hasNew ? Math.max(1, u.diff) : 0)
+    }, 0)
+  }, [activeTrackers, getTrackerUrgency])
 
   // Filtered trackers
   const filteredTrackers = React.useMemo(() => {
@@ -698,13 +779,13 @@ export function RawTrackerView({
               setPipelineModalOpen(true)
             }}
             className="h-9 bg-gradient-to-r from-pink-600 via-rose-600 to-indigo-600 hover:from-pink-700 hover:to-indigo-700 text-white font-bold shadow-lg shadow-pink-600/30 px-3.5"
-            title="ดาวน์โหลด เย็บ 20 หน้า อัป Drive และลงคิวงานอัตโนมัติสำหรับทุกเรื่องที่มีตอนใหม่ (พัก 5 นาทีระหว่างตอน)"
+            title={`ดาวน์โหลด เย็บ 20 หน้า อัป Drive และลงคิวงานอัตโนมัติสำหรับทุกเรื่องที่มีตอนใหม่ (${totalPendingChapters} ตอน)`}
           >
             <Zap className="h-4 w-4 mr-1.5 fill-current animate-pulse text-amber-300" />
             ⚡ อัป raw & ลงคิวงานอัตโนมัติ
-            {newUpdatesCount > 0 && (
+            {totalPendingChapters > 0 && (
               <Badge className="ml-2 bg-white text-slate-900 font-extrabold text-[10px] px-1.5 py-0 h-4">
-                {newUpdatesCount}
+                {totalPendingChapters}
               </Badge>
             )}
           </Button>
@@ -722,6 +803,38 @@ export function RawTrackerView({
           </Button>
         </div>
       </div>
+
+      {/* Duplicate Tracker Warning & Cleanup Banner */}
+      {duplicateTrackers.length > 0 && (
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-3.5 px-4 rounded-xl border border-amber-500/40 bg-gradient-to-r from-amber-950/40 via-[#1c1917]/50 to-[#111726] shadow-md shadow-amber-950/20">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-lg bg-amber-500/20 text-amber-400 shrink-0">
+              <AlertCircle className="h-4 w-4" />
+            </div>
+            <div>
+              <div className="text-sm font-semibold text-amber-200 flex items-center gap-2">
+                ตรวจพบรายการติดตามซ้ำในระบบ ({duplicateTrackers.length} รายการ)
+              </div>
+              <div className="text-xs text-amber-300/70">
+                มีเรื่องหรือลิงก์ต้นฉบับเดียวกันถูกบันทึกซ้ำ คุณสามารถกดปุ่มเพื่อล้างรายการที่ซ้ำออกได้ทันที
+              </div>
+            </div>
+          </div>
+          <Button
+            size="sm"
+            onClick={handleCleanDuplicates}
+            disabled={cleaningDuplicates}
+            className="h-8 bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs shrink-0 shadow-md shadow-amber-600/30"
+          >
+            {cleaningDuplicates ? (
+              <RefreshCw className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+            ) : (
+              <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+            )}
+            ลบรายการซ้ำ ({duplicateTrackers.length})
+          </Button>
+        </div>
+      )}
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1064,33 +1177,43 @@ export function RawTrackerView({
                       </span>
 
                       {/* Status / Urgency Badge */}
-                      {u.isUrgentWithNew ? (
-                        <Badge className="bg-red-600 text-white font-bold px-2.5 py-0.5 shadow-md shadow-red-600/50 animate-pulse text-[11px] flex items-center gap-1">
-                          <Flame className="h-3 w-3 fill-current text-white" />
-                          เรื่องด่วน (+{u.diff} ตอน)
-                        </Badge>
-                      ) : u.hasNew ? (
-                        <Badge className="bg-emerald-600 text-white font-bold px-2.5 py-0.5 shadow-md shadow-emerald-600/30 text-[11px] flex items-center gap-1">
-                          <Sparkles className="h-3 w-3" />
-                          มีตอนใหม่ (+{u.diff} ตอน)
-                        </Badge>
-                      ) : u.isError ? (
-                        <Badge
-                          variant="destructive"
-                          className="text-[10px] px-1.5 py-0.5 flex items-center gap-1"
-                        >
-                          <AlertCircle className="h-3 w-3" />
-                          ตรวจไม่ได้
-                        </Badge>
-                      ) : (
-                        <Badge
-                          variant="outline"
-                          className="border-slate-700 bg-slate-800/80 text-slate-300 text-[10px] px-2 py-0.5 flex items-center gap-1"
-                        >
-                          <CheckCircle2 className="h-3 w-3 text-emerald-400" />
-                          เป็นปัจจุบัน
-                        </Badge>
-                      )}
+                      <div className="flex items-center gap-1">
+                        {duplicateIdSet.has(item.trackerid) && (
+                          <Badge
+                            variant="outline"
+                            className="border-amber-500/50 bg-amber-950/40 text-amber-300 text-[10px] px-1.5 py-0.5"
+                          >
+                            รายการซ้ำ
+                          </Badge>
+                        )}
+                        {u.isUrgentWithNew ? (
+                          <Badge className="bg-red-600 text-white font-bold px-2.5 py-0.5 shadow-md shadow-red-600/50 animate-pulse text-[11px] flex items-center gap-1">
+                            <Flame className="h-3 w-3 fill-current text-white" />
+                            เรื่องด่วน (+{u.diff} ตอน)
+                          </Badge>
+                        ) : u.hasNew ? (
+                          <Badge className="bg-emerald-600 text-white font-bold px-2.5 py-0.5 shadow-md shadow-emerald-600/30 text-[11px] flex items-center gap-1">
+                            <Sparkles className="h-3 w-3" />
+                            มีตอนใหม่ (+{u.diff} ตอน)
+                          </Badge>
+                        ) : u.isError ? (
+                          <Badge
+                            variant="destructive"
+                            className="text-[10px] px-1.5 py-0.5 flex items-center gap-1"
+                          >
+                            <AlertCircle className="h-3 w-3" />
+                            ตรวจไม่ได้
+                          </Badge>
+                        ) : (
+                          <Badge
+                            variant="outline"
+                            className="border-slate-700 bg-slate-800/80 text-slate-300 text-[10px] px-2 py-0.5 flex items-center gap-1"
+                          >
+                            <CheckCircle2 className="h-3 w-3 text-emerald-400" />
+                            เป็นปัจจุบัน
+                          </Badge>
+                        )}
+                      </div>
                     </div>
 
                     {/* Manga Title & Urgent Tag */}
@@ -1368,6 +1491,14 @@ export function RawTrackerView({
                           <div className="space-y-1">
                             <div className="font-semibold text-sm text-slate-100 flex items-center gap-2">
                               <span>{item.manganame || "ไม่ระบุชื่อเรื่อง"}</span>
+                              {duplicateIdSet.has(item.trackerid) && (
+                                <Badge
+                                  variant="outline"
+                                  className="border-amber-500/50 bg-amber-950/40 text-amber-300 text-[10px] px-1.5 py-0.5"
+                                >
+                                  รายการซ้ำ
+                                </Badge>
+                              )}
                               {u.isUrgentManga && (
                                 <span
                                   className={`text-[10px] font-bold rounded px-1.5 py-0.5 flex items-center gap-0.5 shadow-xs ${

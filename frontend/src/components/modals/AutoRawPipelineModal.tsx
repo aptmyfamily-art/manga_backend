@@ -251,7 +251,7 @@ export function AutoRawPipelineModal({
             ? {
                 ...t,
                 status: "stitching",
-                statusText: `กำลังเย็บ ${fileNameDisplay} (${partNum}/${totalParts}, ${sliceCount} ชิ้น)...`,
+                statusText: `กำลังเย็บ ${fileNameDisplay} (${partNum}/${totalParts}, ${sliceCount} ชิ้น, ความกว้างหน้าย่อย #15: ${standardWidth}px)...`,
                 progress: partPercent,
               }
             : t
@@ -530,11 +530,11 @@ export function AutoRawPipelineModal({
                 href="https://github.com/mangahub888/mangahub888.github.io/actions/workflows/auto_raw_tracker.yml"
                 target="_blank"
                 rel="noreferrer"
-                className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800/90 hover:bg-slate-700 text-slate-200 border border-slate-700 hover:border-slate-600 transition shadow-sm"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800/90 hover:bg-slate-700 text-slate-200 border border-slate-700 hover:border-slate-600 transition shadow-sm"
                 title="สั่งรันใน Cloud ผ่าน GitHub Actions ไม่ต้องเปิดหน้าเว็บหรือคอมพิวเตอร์ทิ้งไว้"
               >
                 <Github className="h-3.5 w-3.5 text-white" />
-                รันบน GitHub Actions
+                <span>รันบน GitHub Actions</span>
                 <ExternalLink className="h-3 w-3 text-slate-400" />
               </a>
 
