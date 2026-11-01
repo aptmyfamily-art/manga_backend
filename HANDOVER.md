@@ -10,68 +10,36 @@
 - ยึดตามลำดับสายการบังคับบัญชา: `[USER] ➔ [👑 หัวหน้าหลัก (Main Lead)] ➔ [🎖️ หัวหน้าทีม (Team Leads)] ➔ [👷 ลูกทีม / Specialists]`
 - **Zero Direct Execution & Zero Manual Polling**: หัวหน้าหลักต้องไม่เขียนโค้ด Dev, ไม่รัน Build/Deploy และไม่ Polling shell log เอง ทุกงานเทคนิคต้องส่งต่อผ่าน Sub-Agent (`invoke_subagent`) เท่านั้น
 
-### B. ตัวเชื่อมต่อ ⚡ ThunderScans EN (`en-thunderscans.com`)
-1. **Reverse-Engineering & Backend API:**
-   - โครงสร้างเว็บเป็น WordPress + MangaReader Theme (`ts_reader.run`)
-   - แก้ไขปัญหา Cloudflare No-CORS / Tainted Canvas: ติดตั้ง Endpoint `PROXY_THUNDERSCANS_IMAGE` บน GAS Version `@44` ส่งกลับมาเป็น Base64 Data URLs
-   - พรีโหลดภาพตัวอย่าง 6 สไลซ์แรกแบบขนาน (Parallel Prefetch) ทำให้พรีวิวไม่ขึ้นไอคอน Broken
-2. **ระบบตัดต่อ 20 หน้ามาตรฐาน (Continuous Vertical Slicing Algorithm):**
-   - แก้ปัญหาจากเดิมที่ดึงตามจำนวนชิ้น (8 ชิ้นขนาดยาว ~120,000px)
-   - อัปเกรดเป็นอัลกอริทึมตัดพิกเซลแนวตั้งต่อเนื่อง ($H / 20 \approx 6,000\text{px}$ ต่อหน้า) ได้ไฟล์ภาพครบ **20 หน้าพอดีเป๊ะ (`001.webp` ถึง `020.webp`)**
-   - รอยต่อระหว่างชิ้นภาพเชื่อมต่อเนียนตา 100% ปลอดภัยจากขีดจำกัด 16,383px ของ WebP
-   - อัปโหลดเข้าสู่ Google Drive โฟลเดอร์ **`แปลจนเมื่อย`** (`1hA_5XjT1gLnzrAOFpT-COVfIbuSfVG6_`) สำเร็จสมบูรณ์
+### B. ระบบเย็บภาพ 20 หน้ามาตรฐานแบบ Continuous Vertical Slicing
+- พัฒนาอัลกอริทึมตัดพิกเซลแนวตั้งต่อเนื่องสำหรับทั้ง **ThunderScans (en-thunder)** และ **KuaiKan Manhua**
+- ตัดภาพแนวตั้งขนาดยาวให้ได้ **20 หน้ามาตรฐานพอดีเป๊ะ (`001.jpg` ถึง `020.jpg`)** ไร้รอยต่อ ปลอดภัยจากขีดจำกัดความสูงของไฟล์ภาพ
+- **บังคับฟอร์แมตภาพทุกตัวเชื่อมต่อเป็น `.jpg` (MIME `image/jpeg`) เสมอ 100%** เพื่อความเข้ากันได้สูงสุดและการแสดงผลที่สมบูรณ์
 
-### C. ระบบ KuaiKan Manhua VIP & Pipeline Fix
-1. **กำจัดบั๊กภาพสลับเรื่องขาดสนิท 100%:**
-   - ตัด Fallback แคชตอน 366 (我！天命大反派) ออกจาก `backend/Code.js` (GAS Version `@44`) และ `auto_raw_tracker.py`
-   - ทดสอบรันจริงบน Production: ตอนที่ 240 (*ฉันคือผู้เล่นไร้อาชีพฯ*) และตอนที่ 34 (*ราชันนักฆ่าเกิดใหม่ฯ*) ดึงภาพแท้และเย็บเป็น 20 หน้าอัปโหลดขึ้น Drive สำเร็จ 100%
-2. **ระบบตรวจสอบกระเป๋าเงิน & Auto-Purchase:**
-   - ตรวจพบยอดเหรียญในบัญชี `Natdanai` (ID: `1385854704`) มี **12,931 KK Coins**
-   - รองรับการกดซื้อตอนธรรมดาอัตโนมัติด้วยเหรียญผ่าน Aegis Challenge Signature
-   - ตรวจจับตอนที่เป็น VIP Exclusive (เช่น ตอน 211): หาก VIP หมดอายุ ระบบจะแจ้งเตือน
-3. **Frontend Coin Alert Banner & Badge:**
-   - ติดตั้ง `KuaikanCoinWarningBanner` และ `KuaikanCoinHeaderBadge` บนหน้าเว็บ หากเหรียญหมดหรือติดล็อค จะขึ้นแบนเนอร์สีแดงเด่นชัด พร้อมปุ่มกดตรงเข้าหน้าเติมเงิน KuaiKan (`kuaikanmanhua.com/webs/user/pay`)
-
-### D. ระบบ Auto Cache-Busting บน GitHub Pages (VICTORY CONFIRMED)
-- แก้ปัญหาเบราว์เซอร์จำแคช `Cache-Control: max-age=600` ของ GitHub Pages
-- ติดตั้ง `version.json` และตัวตรวจจับเวอร์ชันใหม่แบบ Real-time (`versionManager.ts`) ทำให้ผู้ใช้ได้รับเวอร์ชันล่าสุดเสมอโดยไม่ต้องกด `Ctrl + Shift + R`
-- ผ่านการ Audit อิสระครบถ้วน 100% และ Deploy สดบน `https://mangahub888.github.io/` (Commit `220bcd3`)
-
-### E. สถานะ Auto Raw Tracker Pipeline
-- **หยุดการทำงานเรียบร้อยตามคำสั่ง**: Run ID `41272661683` ถูกกดยกเลิก (`cancelled`) และ Workflow ถูกตั้งเป็น `disabled_manually`
-
----
-
-### F. ระบบบันทึกคิวงาน WorkQueue มาตรฐาน (KuaiKan WorkQueue Standards)
-- **ปรับปรุงครบทุกจุดในระบบ:** `backend/Code.js` (GAS Version `@45`), `tools/auto_raw_tracker.py`, `KuaiKanLoginModal.tsx`, และ `AutoRawPipelineModal.tsx`
-- **กฎเหล็กที่บังคับใช้ 100%:**
+### C. ระบบมาตรฐาน WorkQueue กฎเหล็ก (ThunderScans & KuaiKan)
+- กำหนดและบังคับใช้ฟอร์แมตมาตรฐาน 100% ครอบคลุมทั้ง `backend/Code.js` (GAS Version @45/@52), `tools/auto_raw_tracker.py`, และ Frontend Modals:
   - 🔗 **Work Link (`worklink`):** `[อัป Raw] https://drive.google.com/drive/folders/...`
   - **Upload Status (`uploadstatus`):** `เสร็จแล้ว`
   - **Uploader Name (`uploadername`):** `Apt`
-- **Deploy สำเร็จ:** Google Apps Script Version `@45` และ GitHub Pages Commit `e3e5919`
+
+### D. การวินิจฉัยและแก้ไขระบบ KuaiKan VIP & Full HD Pipeline
+1. **สถานะ VIP ของคุณ Natdanai:**
+   - พิสูจน์สถานะบัญชี: VIP Type 2, เหลือเวลา 30 วัน (หมดอายุ 01/12/2026), ยอดเหรียญ **13,931 KK Coins**
+2. **การแก้ไข Bug ใน Code.js (GAS Version @52):**
+   - แก้ไข 3 จุดสำคัญ: `is_vip_exclusive`, error 3504, และ hardcoded error messages
+   - ปลดล็อคตอน VIP ดึงภาพ Full HD สำเร็จ 100% (เช่น ตอน 211 *อาจารย์ศิษย์บ้าฯ* 161 ภาพ, ตอน 21 *ยุคเปลี่ยนอาชีพฯ* 172 ภาพ)
+3. **หน้าต่าง Dashboard & Header Badge:**
+   - แสดงสถานะ VIP (30 วัน) และเหรียญคงเหลือ (13,931 KK Coins) แบบ Real-time บน Header Badge และ Dashboard
 
 ---
 
-## 2. สิ่งที่ต้องทำต่อ (Next Tasks)
+## 2. แผนงานลุยต่อพรุ่งนี้ (Tomorrow's Roadmap)
 
-### 📌 ภารกิจระบบเช็คแต้ม & ซื้อตอนที่ติด Locked ของ ThunderScans (en-thunder)
-*(ปัจจุบันระงับไว้ชั่วคราวตามคำสั่งผู้ใช้ พร้อมเริ่มทำต่อเมื่อผู้ใช้สั่งการ)*
-1. **เมื่อตรวจพบตอนที่เป็นสถานะ LOCKED (เช่น Chapter 62 ราคา 50 Coins, Post ID: `692677`):**
-   - ดึงค่า `chapter_post_id` และ `nonce` จากหน้าเว็บตอนนั้น
-   - ยิงคำสั่งซื้อตอน (AJAX Buy Chapter) ไปยัง Endpoint:
-     ```http
-     POST https://en-thunderscans.com/wp-admin/admin-ajax.php
-     Content-Type: application/x-www-form-urlencoded
-     Cookie: <wordpress_logged_in_* ของบัญชี Google ที่บันทึกไว้ในระบบ>
+### 🚀 ภารกิจที่ 1: Playwright Headless Auto-Purchaser บน GitHub Actions (KuaiKan)
+- พัฒนาสคริปต์ Playwright Headless สำหรับจัดการตอนที่ติดเหรียญ/VIP Exclusive บน KuaiKan (เช่น ตอนที่ 22-23 *ยุคเปลี่ยนอาชีพฯ*)
+- ระบบอัตโนมัติในการคลิกปุ่ม `立即支付` เพื่อซื้อตอนและรับส่วนลด VIP 8.5 ส่วนลดอัตโนมัติ
 
-     action=buy_chapter&id=<chapter_post_id>&nonce=<nonce>
-     ```
-2. **การเช็คแต้ม/เหรียญคงเหลือ:**
-   - ตรวจสอบยอด Coins คงเหลือจากหน้าบัญชีผู้ใช้ หรือหน้า Store (`https://en-thunderscans.com/packages-store/`)
-   - หากเหรียญไม่พอซื้อตอน ให้แจ้งเตือนสถานะ Insufficient Coins บนหน้าเว็บ
-3. **เมื่อปลดล็อคสำเร็จ:**
-   - ให้ดาวน์โหลดภาพทุกสไลซ์ และส่งเข้าสู่ **Continuous Vertical Stitching Algorithm** ตัดเป็น **20 หน้ามาตรฐานพอดี (`001.webp` ถึง `020.webp`)** ส่งเข้า Google Drive โฟลเดอร์ `แปลจนเมื่อย` ตาม Flow เดิม
-   - ลงคิวงาน WorkQueue ด้วยฟอร์แมต `[อัป Raw] ...`, `เสร็จแล้ว`, `Apt` ตามมาตรฐานเดียวกัน
+### 🚀 ภารกิจที่ 2: GitHub Actions Pipeline & Auto-Purchase สำหรับ ThunderScans (en-thunder)
+- ออกแบบและสร้าง Roadmap 4 Phase สำหรับระบบซื้อตอนอัตโนมัติและดึง Raw ของ ThunderScans ผ่าน GitHub Actions Pipeline
 
 ---
 
@@ -79,5 +47,5 @@
 - **GitHub Repository:** `mangahub888/mangahub888.github.io` (Branch: `main`)
 - **Live URL:** [https://mangahub888.github.io/](https://mangahub888.github.io/)
 - **Google Apps Script Production Deployment ID:**  
-  `AKfycbzG1H1eBoTsF7Omfso8v23N6HidWXU4kS-yyf0xDunb2BoZgPiUYPIOO2vMLSvYWwHsnw` (Version `@44`)
+  `AKfycbzG1H1eBoTsF7Omfso8v23N6HidWXU4kS-yyf0xDunb2BoZgPiUYPIOO2vMLSvYWwHsnw` (Version `@52`)
 - **Google Drive Root Folder:** `1hA_5XjT1gLnzrAOFpT-COVfIbuSfVG6_` (`แปลจนเมื่อย`)
