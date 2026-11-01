@@ -9,5 +9,3 @@ downloads/
 temp_*
 frontend/public/version.json
 .agents/
-*.mjs
-
