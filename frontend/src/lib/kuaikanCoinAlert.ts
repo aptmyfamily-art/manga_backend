@@ -13,6 +13,7 @@ export interface KuaikanCoinAlertInfo {
   currentBalance?: number | null
   timestamp?: string
   dismissed?: boolean
+  vipRequired?: boolean
 }
 
 export interface KuaikanSessionAuthResponse {
@@ -22,6 +23,7 @@ export interface KuaikanSessionAuthResponse {
   cookiePreview?: string
   coinBalance?: number | null
   insufficientCoins?: boolean
+  vipRequired?: boolean
   coinAlert?: KuaikanCoinAlertInfo | null
   message?: string
   user?: any

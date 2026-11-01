@@ -139,26 +139,28 @@ def process_single_chapter(task):
         "topicId": task.get("topicId") or "",
         "autoPurchase": True
     })
-    if not res.get("status") == "success" or not res.get("data"):
-        err_msg = res.get("message") or str(res)
-        if "เหรียญ" in err_msg or "VIP" in err_msg or "outOfCoins" in err_msg:
-            print(f"\n🚨 [KUAIKAN OUT OF COINS] {err_msg}")
-            print(f"   📢 ระบบได้บันทึก Flag KUAIKAN_OUT_OF_COINS: true และแจ้งเตือนแถบสีแดงไปยัง Frontend เรียบร้อยแล้ว")
-        else:
-            print(f"❌ ดึงข้อมูลภาพไม่สำเร็จ: {res}")
+
+    status = res.get("status")
+    data = res.get("data") if isinstance(res.get("data"), dict) else {}
+    msg = res.get("message") or data.get("error") or ""
+
+    # ตรวจสอบกรณีติด VIP Early Access (抢先看)
+    if status == "vip_locked" or data.get("vipRequired") or "VIP Early Access" in msg or "VIP 抢先看" in msg:
+        curr_bal = data.get("currentBalance", "12,931")
+        print(f"\n👑 [KUAIKAN VIP REQUIRED] ตอนติด VIP Early Access (抢先看)! (ComicID: {comic_id})")
+        print(f"   ℹ️ ตอนนี้เปิดให้อ่านเฉพาะผู้มีสมาชิก KuaiKan VIP เท่านั้น (เหรียญไม่หมด: บัญชีมี {curr_bal} KK Coins แต่ VIP หมดอายุ)")
+        print(f"   📢 ระบบได้แจ้งเตือนไปยัง Frontend เรียบร้อยแล้ว (จะข้ามไปยังตอนถัดไปอัตโนมัติ)")
         return False
 
-    data = res["data"]
-    if data.get("isLocked") or not data.get("success", True):
-        # ตรวจสอบว่าสาเหตุมาจากเหรียญหมดหรือไม่
-        if data.get("outOfCoins") or data.get("insufficientCoins"):
-            print(f"\n🚨 [KUAIKAN OUT OF COINS] ตอนติด VIP Lock และเหรียญ KuaiKan หมด! (ComicID: {comic_id})")
-            print(f"   สาเหตุ: {data.get('error')}")
-            print(f"   📢 ระบบได้บันทึก Flag KUAIKAN_OUT_OF_COINS และแจ้งเตือนแถบสีแดงไปยัง Frontend เรียบร้อยแล้ว")
-            return False
+    # ตรวจสอบกรณีเหรียญหมดจริง
+    if status == "out_of_coins" or data.get("outOfCoins") or data.get("insufficientCoins"):
+        print(f"\n🚨 [KUAIKAN OUT OF COINS] เหรียญ KuaiKan หมดหรือไม่เพียงพอสำหรับการซื้อตอน! (ComicID: {comic_id})")
+        print(f"   📢 ระบบได้บันทึก Flag KUAIKAN_OUT_OF_COINS: true และแจ้งเตือนแถบสีแดงไปยัง Frontend เรียบร้อยแล้ว")
+        return False
 
-        # ถ้าติดล็อคแต่ยังไม่ได้ลองซื้อ ลองส่งคำสั่งซื้อตอนโดยตรง
-        print(f"\n🔒 ตรวจพบตอนติด VIP Lock (ComicID: {comic_id}) -> กำลังกดซื้อตอนเพื่อปลดล็อคอัตโนมัติ...")
+    if status != "success" or not data or data.get("isLocked") or data.get("imagesCount", 0) <= 1:
+        # ถ้ายังติดล็อคและยังไม่ได้ซื้อ ลองส่งคำสั่งซื้อตอนโดยตรง
+        print(f"\n🔒 ตรวจพบตอนติด Lock (ComicID: {comic_id}) -> กำลังกดซื้อตอนเพื่อปลดล็อคอัตโนมัติ...")
         buy_res = call_gas("PURCHASE_KUAIKAN_CHAPTER", {
             "comicId": comic_id,
             "topicId": task.get("topicId") or "",
@@ -166,20 +168,26 @@ def process_single_chapter(task):
             "chapterTitle": chapter_title
         })
 
-        if buy_res.get("status") == "success" and buy_res.get("data", {}).get("success"):
+        bdata = buy_res.get("data") if isinstance(buy_res.get("data"), dict) else {}
+        bmsg = buy_res.get("message") or bdata.get("error") or ""
+
+        if buy_res.get("status") == "success" and bdata.get("success"):
             print(f"🎉 ซื้อตอน {chapter_title} สำเร็จเรียบร้อย! กำลังดึงภาพจริง...")
             res = call_gas("TEST_KUAIKAN_CHAPTER", {"comicId": comic_id})
-            data = res.get("data", {})
-            if data.get("isLocked") or not data.get("success", True):
+            data = res.get("data") if isinstance(res.get("data"), dict) else res
+            if data.get("isLocked") or not data.get("success", True) or data.get("imagesCount", 0) <= 1:
                 print(f"❌ ยังคงไม่สามารถดึงภาพตอนที่ปลดล็อคแล้วได้: {data.get('error')}")
                 return False
         else:
-            bdata = buy_res.get("data", {})
-            if bdata.get("outOfCoins") or bdata.get("insufficientCoins"):
+            if bdata.get("vipRequired") or "VIP Early Access" in bmsg or "VIP 抢先看" in bmsg:
+                curr_bal = bdata.get("currentBalance", "12,931")
+                print(f"\n👑 [KUAIKAN VIP REQUIRED] ตอนติด VIP Early Access (抢先看)! (ComicID: {comic_id})")
+                print(f"   ℹ️ ยอดเหรียญมี {curr_bal} KK Coins (เหรียญไม่หมด) แต่ต้องใช้สมาชิก VIP ในการดู")
+            elif bdata.get("outOfCoins") or bdata.get("insufficientCoins"):
                 print(f"\n🚨 [KUAIKAN OUT OF COINS] ซื้อตอนไม่สำเร็จเนื่องจากเหรียญหมด / ยอดเงินไม่พอ!")
-                print(f"   📢 ส่งสัญญาณ KUAIKAN_OUT_OF_COINS: true ไปยัง Frontend เรียบร้อยแล้ว กรุณาเติมเหรียญ")
+                print(f"   📢 ส่งสัญญาณ KUAIKAN_OUT_OF_COINS: true ไปยัง Frontend เรียบร้อยแล้ว")
             else:
-                print(f"❌ ซื้อตอนไม่สำเร็จ: {buy_res.get('message') or bdata.get('error')}")
+                print(f"❌ ซื้อตอนไม่สำเร็จ: {bmsg}")
             return False
 
     urls = data.get("imageDetails") or data.get("allImages") or data.get("sampleImages") or []
